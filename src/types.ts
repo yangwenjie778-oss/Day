@@ -14,6 +14,7 @@ export interface Note {
   id?: number;
   date: string; // YYYY-MM-DD
   entries: NoteEntry[];
+  person_name?: string;
 }
 
 export interface CalendarDay {

@@ -88,10 +88,17 @@ async function startServer() {
     if (!personId) return res.status(400).json({ error: "personId is required" });
 
     let notes;
-    if (month) {
-      notes = db.prepare("SELECT * FROM notes WHERE person_id = ? AND date LIKE ?").all(personId, `${month}%`);
+    if (personId === '1') {
+      // Aggregated view for "My Calendar"
+      const query = month 
+        ? "SELECT n.*, p.name as person_name FROM notes n JOIN people p ON n.person_id = p.id WHERE n.date LIKE ?"
+        : "SELECT n.*, p.name as person_name FROM notes n JOIN people p ON n.person_id = p.id";
+      notes = month ? db.prepare(query).all(`${month}%`) : db.prepare(query).all();
     } else {
-      notes = db.prepare("SELECT * FROM notes WHERE person_id = ?").all(personId);
+      const query = month
+        ? "SELECT n.*, p.name as person_name FROM notes n JOIN people p ON n.person_id = p.id WHERE n.person_id = ? AND n.date LIKE ?"
+        : "SELECT n.*, p.name as person_name FROM notes n JOIN people p ON n.person_id = p.id WHERE n.person_id = ?";
+      notes = month ? db.prepare(query).all(personId, `${month}%`) : db.prepare(query).all(personId);
     }
     res.json(notes.map((n: any) => ({ ...n, entries: JSON.parse(n.content || '[]') })));
   });

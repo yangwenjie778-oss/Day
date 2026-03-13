@@ -178,10 +178,24 @@ export default function App() {
         const monthStr = format(currentDate, 'yyyy-MM');
         const response = await fetch(`/api/notes?month=${monthStr}&personId=${selectedPerson.id}`);
         const data: Note[] = await response.json();
+        
         const notesMap = data.reduce((acc, note) => {
-          acc[note.date] = note;
+          if (selectedPerson.id === 1) {
+            // Aggregate entries from different people for the same date
+            if (!acc[note.date]) {
+              acc[note.date] = { ...note, entries: note.entries.map(e => ({ ...e, tag: `${note.person_name} - ${e.tag}` })) };
+            } else {
+              acc[note.date].entries = [
+                ...acc[note.date].entries,
+                ...note.entries.map(e => ({ ...e, tag: `${note.person_name} - ${e.tag}` }))
+              ];
+            }
+          } else {
+            acc[note.date] = note;
+          }
           return acc;
         }, {} as Record<string, Note>);
+        
         setNotes(notesMap);
       } catch (error) {
         console.error('Failed to fetch notes:', error);
@@ -234,7 +248,7 @@ export default function App() {
     if (existingNote && existingNote.entries && existingNote.entries.length > 0) {
       setEntries(existingNote.entries);
     } else {
-      setEntries([{ tag: '默认', content: '', images: [] }]);
+      setEntries([{ tag: '', content: '', images: [] }]);
     }
     setActiveEntryIdx(0);
     setIsModalOpen(true);
@@ -328,7 +342,7 @@ export default function App() {
   };
 
   const addTag = () => {
-    const newTag = `标签 ${entries.length + 1}`;
+    const newTag = '';
     setEntries(prev => [...prev, { tag: newTag, content: '', images: [] }]);
     setActiveEntryIdx(entries.length);
   };
@@ -490,6 +504,11 @@ export default function App() {
                 {format(currentDate, 'yyyy年M月')}
                 <ChevronDown size={20} className={cn("transition-transform", isPickerOpen && "rotate-180")} />
               </button>
+              {selectedPerson?.id === 1 && (
+                <span className="absolute -top-1 -right-16 px-2 py-0.5 bg-blue-600/20 text-blue-500 text-[10px] font-bold rounded border border-blue-500/30 uppercase tracking-wider">
+                  汇总
+                </span>
+              )}
               <AnimatePresence>
                 {isPickerOpen && (
                   <YearMonthPicker 
@@ -562,7 +581,8 @@ export default function App() {
                         <div key={eIdx} className="space-y-0.5">
                           {entry.content && (
                             <p className="text-[10px] text-[#aaa] line-clamp-1 leading-tight">
-                              <span className="text-blue-500/70 font-bold">[{entry.tag}]</span> {entry.content}
+                              {entry.tag && <span className="text-blue-500/70 font-bold">[{entry.tag}] </span>}
+                              {entry.content}
                             </p>
                           )}
                           {entry.images && entry.images.length > 0 && eIdx === 0 && (
@@ -619,7 +639,7 @@ export default function App() {
                       {selectedDay && format(selectedDay, 'yyyy年M月d日')}
                     </h2>
                     <p className="text-xs text-[#888]">
-                      {selectedPerson?.name} 的记录
+                      {selectedPerson?.id === 1 ? '全员汇总视图 (只读)' : `${selectedPerson?.name} 的记录`}
                     </p>
                   </div>
                 </div>
@@ -647,7 +667,7 @@ export default function App() {
                           : "text-[#888] hover:text-[#e5e5e5] hover:bg-[#333]"
                       )}
                     >
-                      {entry.tag}
+                      {entry.tag || '无标签'}
                       {activeEntryIdx === idx && !isEditingTagName && (
                         <Edit2 size={12} className="opacity-60 hover:opacity-100" onClick={(e) => { e.stopPropagation(); startRenameTag(); }} />
                       )}
@@ -672,6 +692,12 @@ export default function App() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {selectedPerson?.id === 1 && (
+                  <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-lg text-xs text-blue-400 flex items-center gap-2">
+                    <Users size={14} />
+                    当前处于汇总模式，您可以查看所有人员的记录，但无法在此模式下进行修改。
+                  </div>
+                )}
                 {/* Tag Name Editor */}
                 {isEditingTagName && (
                   <div className="flex items-center gap-2 p-3 bg-blue-600/10 rounded-lg border border-blue-600/30">
@@ -742,7 +768,11 @@ export default function App() {
               <div className="flex items-center justify-between px-6 py-4 bg-[#252525] border-t border-[#333]">
                 <button 
                   onClick={deleteNote}
-                  className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors text-sm"
+                  disabled={isSubmitting || selectedPerson?.id === 1}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors text-sm",
+                    selectedPerson?.id === 1 && "opacity-0 pointer-events-none"
+                  )}
                 >
                   <Trash2 size={18} />
                   清空此日所有记录
@@ -752,19 +782,21 @@ export default function App() {
                     onClick={() => setIsModalOpen(false)}
                     className="px-6 py-2 text-sm font-medium hover:bg-[#333] rounded-lg transition-colors"
                   >
-                    取消
+                    关闭
                   </button>
-                <button 
-                  onClick={saveNote}
-                  disabled={isSubmitting}
-                  className={cn(
-                    "flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium shadow-lg shadow-blue-900/20",
-                    isSubmitting && "opacity-50 cursor-not-allowed"
+                  {selectedPerson?.id !== 1 && (
+                    <button 
+                      onClick={saveNote}
+                      disabled={isSubmitting}
+                      className={cn(
+                        "flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium shadow-lg shadow-blue-900/20",
+                        isSubmitting && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      <Save size={18} />
+                      {isSubmitting ? '保存中...' : '保存全部更改'}
+                    </button>
                   )}
-                >
-                  <Save size={18} />
-                  {isSubmitting ? '保存中...' : '保存全部更改'}
-                </button>
                 </div>
               </div>
             </motion.div>
