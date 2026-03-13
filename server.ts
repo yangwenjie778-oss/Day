@@ -124,6 +124,37 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.get("/api/search", (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.json([]);
+
+    const query = `
+      SELECT n.*, p.name as person_name, p.avatar_color 
+      FROM notes n 
+      JOIN people p ON n.person_id = p.id 
+      WHERE n.content LIKE ? 
+      ORDER BY n.date DESC
+    `;
+    const results = db.prepare(query).all(`%${q}%`);
+    
+    // Parse content and filter entries that match the search term
+    const filteredResults = results.flatMap((row: any) => {
+      const entries = JSON.parse(row.content || '[]') as any[];
+      return entries
+        .filter(entry => 
+          entry.content.toLowerCase().includes(String(q).toLowerCase()) || 
+          entry.tag.toLowerCase().includes(String(q).toLowerCase())
+        )
+        .map(entry => ({
+          ...row,
+          entry,
+          date: row.date
+        }));
+    });
+
+    res.json(filteredResults);
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

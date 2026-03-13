@@ -136,6 +136,10 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -416,6 +420,24 @@ export default function App() {
     setContextMenu({ x: e.clientX, y: e.clientY, personId });
   };
 
+  const handleSearch = async (query: string) => {
+    setSearchQuery(query);
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      setSearchResults(data);
+    } catch (error) {
+      console.error('Search failed:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
   const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
   return (
@@ -535,7 +557,10 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <button className="p-2 hover:bg-[#2a2a2a] rounded transition-colors">
+            <button 
+              onClick={() => setIsSearchModalOpen(true)}
+              className="p-2 hover:bg-[#2a2a2a] rounded transition-colors"
+            >
               <Search size={20} className="text-[#888]" />
             </button>
           </div>
@@ -861,6 +886,162 @@ export default function App() {
                   )}
                 >
                   {isSubmitting ? '添加中...' : '确定添加'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Search Modal */}
+      <AnimatePresence>
+        {isSearchModalOpen && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              className="bg-[#1a1a1a] w-full max-w-4xl h-[80vh] rounded-2xl border border-[#333] shadow-2xl flex flex-col overflow-hidden"
+            >
+              {/* Search Header */}
+              <div className="p-6 border-b border-[#333] space-y-4">
+                <div className="flex items-center gap-4 bg-[#252525] px-4 py-3 rounded-xl border border-[#444] focus-within:border-blue-500 transition-all">
+                  <Search size={20} className="text-[#888]" />
+                  <input 
+                    autoFocus
+                    value={searchQuery}
+                    onChange={(e) => handleSearch(e.target.value)}
+                    placeholder="搜索聊天记录、备注、标签..."
+                    className="bg-transparent border-none outline-none flex-1 text-lg text-white"
+                  />
+                  {searchQuery && (
+                    <button onClick={() => handleSearch('')} className="text-[#888] hover:text-white">
+                      <X size={18} />
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-6 text-sm font-medium text-[#888]">
+                  {['聊天记录', '文件', '图片', '链接'].map((tab, i) => (
+                    <button key={tab} className={cn("pb-2 border-b-2 transition-all", i === 0 ? "text-white border-blue-500" : "border-transparent hover:text-white")}>
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 flex overflow-hidden">
+                {/* Search Results */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                  {isSearching ? (
+                    <div className="flex flex-col items-center justify-center h-full text-[#555] gap-4">
+                      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      <p>正在搜索中...</p>
+                    </div>
+                  ) : searchResults.length > 0 ? (
+                    searchResults.map((result, idx) => (
+                      <motion.div 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.05 }}
+                        key={idx}
+                        onClick={() => {
+                          setCurrentDate(new Date(result.date));
+                          const person = people.find(p => p.id === result.person_id);
+                          if (person) setSelectedPerson(person);
+                          setIsSearchModalOpen(false);
+                          setTimeout(() => openNoteModal(new Date(result.date)), 100);
+                        }}
+                        className="bg-[#252525] p-4 rounded-xl border border-transparent hover:border-blue-500/30 hover:bg-[#2a2a2a] transition-all cursor-pointer group"
+                      >
+                        <div className="flex gap-4">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ backgroundColor: result.avatar_color }}>
+                            {result.person_name[0]}
+                          </div>
+                          <div className="flex-1 space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="font-semibold text-white">{result.person_name}</span>
+                              <span className="text-xs text-[#555]">{result.date}</span>
+                            </div>
+                            <div className="space-y-1">
+                              {result.entry.tag && (
+                                <span className="inline-block px-2 py-0.5 bg-blue-600/20 text-blue-500 text-[10px] font-bold rounded uppercase tracking-wider mb-1">
+                                  {result.entry.tag}
+                                </span>
+                              )}
+                              <p className="text-sm text-[#aaa] line-clamp-2 leading-relaxed group-hover:text-[#e5e5e5] transition-colors">
+                                {result.entry.content}
+                              </p>
+                            </div>
+                            {result.entry.images && result.entry.images.length > 0 && (
+                              <div className="flex gap-2 mt-2">
+                                {result.entry.images.slice(0, 4).map((img: string, i: number) => (
+                                  <div key={i} className="w-20 h-20 rounded-lg overflow-hidden border border-[#333]">
+                                    <img src={img} alt="preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))
+                  ) : searchQuery ? (
+                    <div className="flex flex-col items-center justify-center h-full text-[#555] gap-2">
+                      <Search size={48} className="opacity-20" />
+                      <p>未找到相关内容</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-[#555] gap-2">
+                      <Search size={48} className="opacity-20" />
+                      <p>输入关键词开始搜索</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Filters Sidebar */}
+                <div className="w-64 border-l border-[#333] p-6 space-y-8 bg-[#1e1e1e]">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-[#888] uppercase tracking-widest">筛选</h3>
+                    <button onClick={() => handleSearch('')} className="text-xs text-[#555] hover:text-white flex items-center gap-1">
+                      <Trash2 size={12} /> 重置
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs text-[#555] font-bold">发送人</label>
+                      <div className="bg-[#252525] px-3 py-2 rounded-lg border border-[#333] text-sm text-[#888] cursor-pointer hover:border-blue-500 transition-colors">
+                        点击选择
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs text-[#555] font-bold">时间</label>
+                      <div className="space-y-2">
+                        <div className="bg-[#252525] px-3 py-2 rounded-lg border border-[#333] text-sm text-[#888] cursor-pointer hover:border-blue-500 transition-colors">
+                          开始：点击选择
+                        </div>
+                        <div className="bg-[#252525] px-3 py-2 rounded-lg border border-[#333] text-sm text-[#888] cursor-pointer hover:border-blue-500 transition-colors">
+                          截止：点击选择
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs text-[#555] font-bold">@用户</label>
+                      <div className="bg-[#252525] px-3 py-2 rounded-lg border border-[#333] text-sm text-[#888] cursor-pointer hover:border-blue-500 transition-colors">
+                        点击选择
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-[#1a1a1a] border-t border-[#333] flex justify-end">
+                <button 
+                  onClick={() => setIsSearchModalOpen(false)}
+                  className="px-6 py-2 bg-[#2a2a2a] hover:bg-[#333] rounded-xl text-sm font-medium transition-colors"
+                >
+                  关闭搜索
                 </button>
               </div>
             </motion.div>
