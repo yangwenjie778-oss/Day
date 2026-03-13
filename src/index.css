@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-calendar-bg: #1a1a1a;
+  --color-calendar-border: #333333;
+  --color-calendar-text: #e5e5e5;
+  --color-calendar-muted: #888888;
+  --color-calendar-accent: #3b82f6;
+}
+
+body {
+  background-color: #121212;
+  color: var(--color-calendar-text);
+  font-family: var(--font-sans);
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-top: 1px solid var(--color-calendar-border);
+  border-left: 1px solid var(--color-calendar-border);
+}
+
+.calendar-cell {
+  min-height: 120px;
+  border-right: 1px solid var(--color-calendar-border);
+  border-bottom: 1px solid var(--color-calendar-border);
+  padding: 8px;
+  transition: background-color 0.2s;
+}
+
+.calendar-cell:hover {
+  background-color: #252525;
+}
+
+.calendar-cell.today {
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+.calendar-cell.other-month {
+  opacity: 0.3;
+}
