@@ -128,6 +128,73 @@ function ContextMenu({ x, y, onClose, onDelete, onAdd }: ContextMenuProps) {
 
 // --- Main App ---
 
+// Memoized Day Component to prevent unnecessary re-renders
+const CalendarDayCell = React.memo(({ 
+  day, 
+  note, 
+  isSelected, 
+  onClick, 
+  onContextMenu 
+}: { 
+  day: CalendarDay, 
+  note: any, 
+  isSelected: boolean, 
+  onClick: (date: Date) => void,
+  onContextMenu: (e: React.MouseEvent, date: Date) => void
+}) => {
+  const isToday = isSameDay(day.date, new Date());
+  
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      onClick={() => onClick(day.date)}
+      onContextMenu={(e) => onContextMenu(e, day.date)}
+      className={cn(
+        "min-h-[100px] p-2 border-r border-b border-[#333] transition-all cursor-pointer group relative overflow-hidden",
+        !day.isCurrentMonth && "bg-[#161616] opacity-30",
+        day.isCurrentMonth && "bg-[#1c1c1c] hover:bg-[#252525]",
+        isSelected && "ring-2 ring-inset ring-blue-600 bg-blue-600/5 z-10"
+      )}
+    >
+      <div className="flex justify-between items-start mb-1">
+        <span className={cn(
+          "text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full transition-colors",
+          isToday ? "bg-blue-600 text-white" : "text-[#555] group-hover:text-[#888]"
+        )}>
+          {format(day.date, 'd')}
+        </span>
+      </div>
+      
+      <div className="space-y-1 overflow-hidden">
+        {note && note.entries && note.entries.slice(0, 3).map((entry: any, eIdx: number) => (
+          <div key={eIdx} className="space-y-0.5">
+            {entry.content && (
+              <p className="text-[10px] text-[#aaa] line-clamp-1 leading-tight">
+                {entry.tag && <span className="text-blue-500/70 font-bold">[{entry.tag}] </span>}
+                {entry.content}
+              </p>
+            )}
+            {entry.images && entry.images.length > 0 && eIdx === 0 && (
+              <div className="flex gap-0.5 mt-0.5">
+                {entry.images.slice(0, 3).map((img: string, i: number) => (
+                  <div key={i} className="w-4 h-4 rounded-sm bg-[#333] overflow-hidden shrink-0">
+                    <img src={img} alt="" className="w-full h-full object-cover opacity-50" referrerPolicy="no-referrer" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        {note && note.entries && note.entries.length > 3 && (
+          <p className="text-[9px] text-blue-500 font-bold">+{note.entries.length - 3} 更多...</p>
+        )}
+      </div>
+    </motion.div>
+  );
+});
+
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [notes, setNotes] = useState<Record<string, Note>>({});
@@ -156,58 +223,77 @@ export default function App() {
 
   const pickerRef = useRef<HTMLDivElement>(null);
 
+  // --- Local Storage Helpers ---
+  const STORAGE_KEYS = {
+    PEOPLE: 'calendar_people',
+    NOTES: 'calendar_notes'
+  };
+
+  const getLocalPeople = (): Person[] => {
+    const stored = localStorage.getItem(STORAGE_KEYS.PEOPLE);
+    if (!stored) {
+      const defaultPeople = [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
+      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(defaultPeople));
+      return defaultPeople;
+    }
+    return JSON.parse(stored);
+  };
+
+  const getLocalNotes = (): Record<string, Note> => {
+    const stored = localStorage.getItem(STORAGE_KEYS.NOTES);
+    return stored ? JSON.parse(stored) : {};
+  };
+
+  const saveLocalPeople = (newPeople: Person[]) => {
+    localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(newPeople));
+    setPeople(newPeople);
+  };
+
+  const saveLocalNotes = (newNotes: Record<string, Note>) => {
+    localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(newNotes));
+    setNotes(newNotes);
+  };
+
   // Fetch people on mount
   useEffect(() => {
-    const fetchPeople = async () => {
-      try {
-        const response = await fetch('/api/people');
-        const data = await response.json();
-        setPeople(data);
-        if (data.length > 0) {
-          setSelectedPerson(data[0]);
-        }
-      } catch (error) {
-        console.error('Failed to fetch people:', error);
-      }
-    };
-    fetchPeople();
+    const initialPeople = getLocalPeople();
+    setPeople(initialPeople);
+    if (initialPeople.length > 0) {
+      setSelectedPerson(initialPeople[0]);
+    }
+    setIsLoading(false);
   }, []);
 
-  // Fetch notes when date or person changes
+  // Sync notes when date or person changes
   useEffect(() => {
     if (!selectedPerson) return;
     
-    const fetchNotes = async () => {
-      try {
-        const monthStr = format(currentDate, 'yyyy-MM');
-        const response = await fetch(`/api/notes?month=${monthStr}&personId=${selectedPerson.id}`);
-        const data: Note[] = await response.json();
+    const allNotes = getLocalNotes();
+    const notesMap: Record<string, Note> = {};
+
+    Object.values(allNotes).forEach(note => {
+      if (selectedPerson.id === 1) {
+        // Aggregate entries from all people for the summary view
+        const person = getLocalPeople().find(p => p.id === note.person_id);
+        const personName = person ? person.name : '未知';
         
-        const notesMap = data.reduce((acc, note) => {
-          if (selectedPerson.id === 1) {
-            // Aggregate entries from different people for the same date
-            if (!acc[note.date]) {
-              acc[note.date] = { ...note, entries: note.entries.map(e => ({ ...e, tag: `${note.person_name} - ${e.tag}` })) };
-            } else {
-              acc[note.date].entries = [
-                ...acc[note.date].entries,
-                ...note.entries.map(e => ({ ...e, tag: `${note.person_name} - ${e.tag}` }))
-              ];
-            }
-          } else {
-            acc[note.date] = note;
-          }
-          return acc;
-        }, {} as Record<string, Note>);
-        
-        setNotes(notesMap);
-      } catch (error) {
-        console.error('Failed to fetch notes:', error);
-      } finally {
-        setIsLoading(false);
+        if (!notesMap[note.date]) {
+          notesMap[note.date] = { 
+            ...note, 
+            entries: note.entries.map(e => ({ ...e, tag: `${personName} - ${e.tag}` })) 
+          };
+        } else {
+          notesMap[note.date].entries = [
+            ...notesMap[note.date].entries,
+            ...note.entries.map(e => ({ ...e, tag: `${personName} - ${e.tag}` }))
+          ];
+        }
+      } else if (note.person_id === selectedPerson.id) {
+        notesMap[note.date] = note;
       }
-    };
-    fetchNotes();
+    });
+    
+    setNotes(notesMap);
   }, [currentDate, selectedPerson]);
 
   // Close picker on outside click
@@ -293,33 +379,34 @@ export default function App() {
   };
 
   const saveNote = async () => {
-    if (!selectedDay || !selectedPerson || isSubmitting) return;
-    const dateStr = format(selectedDay, 'yyyy-MM-dd');
+    if (!selectedDay || !selectedPerson || selectedPerson.id === 1 || isSubmitting) return;
+    
     setIsSubmitting(true);
+    const dateStr = format(selectedDay, 'yyyy-MM-dd');
+    const storageKey = `${selectedPerson.id}_${dateStr}`;
     
     try {
-      const response = await fetch('/api/notes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: dateStr,
-          entries: entries,
-          personId: selectedPerson.id
-        })
-      });
-
-      if (response.ok) {
-        setNotes(prev => ({
-          ...prev,
-          [dateStr]: { date: dateStr, entries: entries }
-        }));
-        setIsModalOpen(false);
-      } else {
-        const err = await response.json();
-        console.error('Save failed:', err);
-      }
+      const allNotes = getLocalNotes();
+      const newNote: Note = {
+        id: Date.now(),
+        person_id: selectedPerson.id,
+        date: dateStr,
+        entries: entries
+      };
+      
+      allNotes[storageKey] = newNote;
+      saveLocalNotes(allNotes);
+      
+      // Update local state
+      setNotes(prev => ({
+        ...prev,
+        [dateStr]: newNote
+      }));
+      
+      setIsModalOpen(false);
     } catch (error) {
       console.error('Failed to save note:', error);
+      alert('保存失败，请重试');
     } finally {
       setIsSubmitting(false);
     }
@@ -328,16 +415,20 @@ export default function App() {
   const deleteNote = async () => {
     if (!selectedDay || !selectedPerson || isSubmitting) return;
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
+    const storageKey = `${selectedPerson.id}_${dateStr}`;
     setIsSubmitting(true);
     
     try {
-      const response = await fetch(`/api/notes/${selectedPerson.id}/${dateStr}`, { method: 'DELETE' });
-      if (response.ok) {
-        const newNotes = { ...notes };
-        delete newNotes[dateStr];
-        setNotes(newNotes);
-        setIsModalOpen(false);
-      }
+      const allNotes = getLocalNotes();
+      delete allNotes[storageKey];
+      saveLocalNotes(allNotes);
+      
+      setNotes(prev => {
+        const updated = { ...prev };
+        delete updated[dateStr];
+        return updated;
+      });
+      setIsModalOpen(false);
     } catch (error) {
       console.error('Failed to delete note:', error);
     } finally {
@@ -377,38 +468,45 @@ export default function App() {
     if (!newPersonName.trim() || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const response = await fetch('/api/people', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newPersonName.trim() })
-      });
-      if (!response.ok) throw new Error('Failed to add person');
-      const newPerson = await response.json();
-      setPeople(prev => [...prev, newPerson]);
+      const currentPeople = getLocalPeople();
+      const newPerson: Person = {
+        id: Date.now(),
+        name: newPersonName.trim(),
+        avatar_color: `hsl(${Math.random() * 360}, 70%, 50%)`
+      };
+      
+      const updatedPeople = [...currentPeople, newPerson];
+      saveLocalPeople(updatedPeople);
       setSelectedPerson(newPerson);
       setNewPersonName('');
       setIsAddPersonModalOpen(false);
     } catch (error) {
       console.error('Failed to add person:', error);
-      alert('添加人员失败，请重试');
+      alert('添加人员失败');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDeletePerson = async (id: number) => {
-    // In an iframe, we should avoid window.confirm. 
-    // For now, we'll just execute it or you can add a custom modal.
-    // I'll add a simple confirmation check via state if needed, 
-    // but for immediate fix I'll just proceed or use a simpler check.
+    if (id === 1) return; // Don't delete summary
     try {
-      const response = await fetch(`/api/people/${id}`, { method: 'DELETE' });
-      if (response.ok) {
-        setPeople(prev => prev.filter(p => p.id !== id));
-        if (selectedPerson?.id === id) {
-          const remaining = people.filter(p => p.id !== id);
-          setSelectedPerson(remaining.length > 0 ? remaining[0] : null);
+      const currentPeople = getLocalPeople();
+      const updatedPeople = currentPeople.filter(p => p.id !== id);
+      saveLocalPeople(updatedPeople);
+      
+      // Also delete their notes
+      const allNotes = getLocalNotes();
+      const filteredNotes: Record<string, Note> = {};
+      Object.entries(allNotes).forEach(([key, note]) => {
+        if (!key.startsWith(`${id}_`)) {
+          filteredNotes[key] = note;
         }
+      });
+      saveLocalNotes(filteredNotes);
+
+      if (selectedPerson?.id === id) {
+        setSelectedPerson(updatedPeople[0]);
       }
     } catch (error) {
       console.error('Failed to delete person:', error);
@@ -427,15 +525,36 @@ export default function App() {
       return;
     }
     setIsSearching(true);
-    try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-      const data = await response.json();
-      setSearchResults(data);
-    } catch (error) {
-      console.error('Search failed:', error);
-    } finally {
+    
+    // Local search implementation
+    setTimeout(() => {
+      const allNotes = getLocalNotes();
+      const currentPeople = getLocalPeople();
+      const results: any[] = [];
+      const q = query.toLowerCase();
+
+      Object.entries(allNotes).forEach(([key, note]) => {
+        const person = currentPeople.find(p => p.id === note.person_id);
+        if (!person) return;
+
+        const matchingEntries = note.entries.filter(entry => 
+          entry.content.toLowerCase().includes(q) || 
+          entry.tag.toLowerCase().includes(q)
+        );
+
+        matchingEntries.forEach(entry => {
+          results.push({
+            ...note,
+            person_name: person.name,
+            avatar_color: person.avatar_color,
+            entry
+          });
+        });
+      });
+
+      setSearchResults(results.sort((a, b) => b.date.localeCompare(a.date)));
       setIsSearching(false);
-    }
+    }, 100);
   };
 
   const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -579,66 +698,16 @@ export default function App() {
         <main className="flex-1 overflow-auto">
           <div className="grid grid-cols-7 h-full min-h-[600px]">
             {calendarDays.map((day, idx) => (
-              <div 
+              <CalendarDayCell 
                 key={idx}
-                onClick={() => openNoteModal(day.date)}
-                className={cn(
-                  "calendar-cell group relative flex flex-col gap-1 cursor-pointer",
-                  !day.isCurrentMonth && "other-month",
-                  day.isToday && "today"
-                )}
-              >
-                <div className="flex justify-between items-start">
-                  <span className={cn(
-                    "text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full transition-colors",
-                    day.isToday ? "bg-blue-600 text-white" : "text-[#e5e5e5] group-hover:bg-[#333]"
-                  )}>
-                    {format(day.date, 'd')}
-                  </span>
-                  {day.isToday && <span className="text-[10px] text-blue-500 font-bold mt-1.5 mr-1">TODAY</span>}
-                </div>
-
-                {/* Note Preview */}
-                <div className="flex-1 overflow-hidden">
-                  {day.note && day.note.entries && day.note.entries.length > 0 && (
-                    <div className="space-y-1">
-                      {day.note.entries.map((entry, eIdx) => (
-                        <div key={eIdx} className="space-y-0.5">
-                          {entry.content && (
-                            <p className="text-[10px] text-[#aaa] line-clamp-1 leading-tight">
-                              {entry.tag && <span className="text-blue-500/70 font-bold">[{entry.tag}] </span>}
-                              {entry.content}
-                            </p>
-                          )}
-                          {entry.images && entry.images.length > 0 && eIdx === 0 && (
-                            <div className="relative h-10 w-full rounded overflow-hidden mt-1 bg-[#222] flex gap-0.5">
-                              {entry.images.slice(0, 3).map((img, iIdx) => (
-                                <img 
-                                  key={iIdx}
-                                  src={img} 
-                                  alt="preview" 
-                                  className="flex-1 h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity"
-                                  referrerPolicy="no-referrer"
-                                />
-                              ))}
-                              {entry.images.length > 3 && (
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-[10px] font-bold">
-                                  +{entry.images.length - 3}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Hover Action */}
-                <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Plus size={16} className="text-blue-500" />
-                </div>
-              </div>
+                day={day}
+                note={day.note}
+                isSelected={selectedDay ? isSameDay(day.date, selectedDay) : false}
+                onClick={openNoteModal}
+                onContextMenu={(e) => {
+                  // You can add a context menu for days if needed
+                }}
+              />
             ))}
           </div>
         </main>
