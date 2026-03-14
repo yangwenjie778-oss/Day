@@ -33,7 +33,10 @@ import {
   User,
   Users,
   CheckCircle2,
-  Settings
+  Settings,
+  Download,
+  Upload,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from './lib/utils';
@@ -216,6 +219,142 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // --- Export/Import Logic ---
+  const exportToJson = () => {
+    const data = {
+      people: getLocalPeople(),
+      notes: getLocalNotes(),
+      theme: themeColor,
+      themeMode: themeMode,
+      exportDate: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportToHtml = () => {
+    const peopleData = getLocalPeople();
+    const notesData = getLocalNotes();
+    
+    // Sort notes by date (chronological)
+    const sortedKeys = Object.keys(notesData).sort((a, b) => {
+      const dateA = a.includes('_') ? a.split('_')[1] : a;
+      const dateB = b.includes('_') ? b.includes('_') ? b.split('_')[1] : b : b;
+      return dateA.localeCompare(dateB);
+    });
+    
+    let htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>日历记录导出报告</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 40px; background: #f4f7f6; }
+          .header { text-align: center; margin-bottom: 40px; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+          h1 { margin: 0; color: #1e40af; font-size: 2.5em; }
+          .meta { color: #6b7280; margin-top: 10px; }
+          .note-card { background: white; border-radius: 12px; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 5px solid #3b82f6; }
+          .date { font-weight: 800; font-size: 1.4em; color: #1e3a8a; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+          .person { font-weight: 600; color: #4b5563; margin-bottom: 20px; font-size: 0.9em; background: #f3f4f6; display: inline-block; padding: 4px 12px; border-radius: 20px; }
+          .entry { margin-bottom: 20px; border-top: 1px solid #f3f4f6; padding-top: 15px; }
+          .tag { display: inline-block; background: #eff6ff; color: #2563eb; padding: 3px 10px; border-radius: 6px; font-size: 0.75em; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+          .content { white-space: pre-wrap; margin-top: 8px; font-size: 1.05em; color: #1f2937; }
+          .images { display: flex; gap: 12px; margin-top: 15px; flex-wrap: wrap; }
+          .img-container { width: 200px; height: 130px; overflow: hidden; border-radius: 8px; border: 1px solid #e5e7eb; transition: transform 0.2s; }
+          .img-container:hover { transform: scale(1.02); }
+          .img-container img { width: 100%; height: 100%; object-fit: cover; }
+          @media print {
+            body { background: white; padding: 0; }
+            .note-card { box-shadow: none; border: 1px solid #eee; page-break-inside: avoid; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>日历记录报告</h1>
+          <div class="meta">导出时间: ${format(new Date(), 'yyyy年MM月dd日 HH:mm:ss')}</div>
+        </div>
+    `;
+
+    sortedKeys.forEach(key => {
+      const note = notesData[key];
+      const person = peopleData.find(p => p.id === note.person_id);
+      const displayDate = key.includes('_') ? key.split('_')[1] : key;
+      
+      htmlContent += `
+        <div class="note-card">
+          <div class="date">${displayDate}</div>
+          <div class="person">记录人: ${person ? person.name : '未知'}</div>
+          ${note.entries.map(entry => `
+            <div class="entry">
+              ${entry.tag ? `<div class="tag">${entry.tag}</div>` : ''}
+              <div class="content">${entry.content || '(无文字内容)'}</div>
+              ${entry.images && entry.images.length > 0 ? `
+                <div class="images">
+                  ${entry.images.map(img => `
+                    <div class="img-container">
+                      <img src="${img}" alt="图片">
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    });
+
+    htmlContent += `
+        <div style="text-align: center; margin-top: 50px; color: #9ca3af; font-size: 0.8em;">
+          由日历应用自动生成
+        </div>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.people && data.notes) {
+          if (window.confirm('导入数据将覆盖当前所有数据，是否继续？')) {
+            localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(data.people));
+            localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(data.notes));
+            if (data.theme) localStorage.setItem(STORAGE_KEYS.THEME, data.theme);
+            if (data.themeMode) localStorage.setItem(STORAGE_KEYS.THEME_MODE, data.themeMode);
+            window.location.reload();
+          }
+        } else {
+          alert('无效的数据格式，请确保上传的是导出的 JSON 备份文件。');
+        }
+      } catch (err) {
+        alert('解析文件失败，请确保文件内容正确。');
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    event.target.value = '';
+  };
+
   // Modal Editing State
   const [entries, setEntries] = useState<NoteEntry[]>([]);
   const [activeEntryIdx, setActiveEntryIdx] = useState(0);
@@ -258,6 +397,26 @@ export default function App() {
   const saveLocalNotes = (newNotes: Record<string, Note>) => {
     localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(newNotes));
     setNotes(newNotes);
+  };
+
+  const getSummaryDataForDay = (day: Date) => {
+    if (!day) return [];
+    const dateStr = format(day, 'yyyy-MM-dd');
+    const allNotes = getLocalNotes();
+    const allPeople = getLocalPeople();
+    
+    const summary: { person: Person, note: Note }[] = [];
+    
+    // Skip the first person (Summary View itself)
+    allPeople.slice(1).forEach(person => {
+      const personNoteKey = `${person.id}_${dateStr}`;
+      const note = allNotes[personNoteKey];
+      if (note && note.entries && note.entries.length > 0) {
+        summary.push({ person, note });
+      }
+    });
+    
+    return summary;
   };
 
   // Fetch people on mount
@@ -755,7 +914,10 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-[var(--color-calendar-surface)] w-full max-w-3xl rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className={cn(
+                "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-all duration-300",
+                selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
+              )}
             >
               <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-calendar-border)]">
                 <div className="flex items-center gap-3">
@@ -780,52 +942,97 @@ export default function App() {
               </div>
 
               {/* Tabs Bar */}
-              <div className="flex items-center px-6 py-2 bg-[var(--color-calendar-surface)] border-b border-[var(--color-calendar-border)] gap-2 overflow-x-auto no-scrollbar">
-                {entries.map((entry, idx) => (
-                  <div key={idx} className="flex items-center group">
-                    <button
-                      onClick={() => {
-                        setActiveEntryIdx(idx);
-                        setIsEditingTagName(false);
-                      }}
-                      className={cn(
-                        "px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 whitespace-nowrap",
-                        activeEntryIdx === idx 
-                          ? "bg-[var(--color-calendar-accent)] text-white shadow-lg" 
-                          : "text-[var(--color-calendar-text-muted)] hover:text-[var(--color-calendar-text)] hover:bg-[var(--color-calendar-surface-hover)]"
-                      )}
-                    >
-                      {entry.tag || '无标签'}
-                      {activeEntryIdx === idx && !isEditingTagName && (
-                        <Edit2 size={12} className="opacity-60 hover:opacity-100" onClick={(e) => { e.stopPropagation(); startRenameTag(); }} />
-                      )}
-                    </button>
-                    {entries.length > 1 && (
-                      <button 
-                        onClick={() => removeTag(idx)}
-                        className="ml-1 p-1 text-[var(--color-calendar-text-dim)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+              {selectedPerson?.id !== 1 && (
+                <div className="flex items-center px-6 py-2 bg-[var(--color-calendar-surface)] border-b border-[var(--color-calendar-border)] gap-2 overflow-x-auto no-scrollbar">
+                  {entries.map((entry, idx) => (
+                    <div key={idx} className="flex items-center group">
+                      <button
+                        onClick={() => {
+                          setActiveEntryIdx(idx);
+                          setIsEditingTagName(false);
+                        }}
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 whitespace-nowrap",
+                          activeEntryIdx === idx 
+                            ? "bg-[var(--color-calendar-accent)] text-white shadow-lg" 
+                            : "text-[var(--color-calendar-text-muted)] hover:text-[var(--color-calendar-text)] hover:bg-[var(--color-calendar-surface-hover)]"
+                        )}
                       >
-                        <X size={12} />
+                        {entry.tag || '无标签'}
+                        {activeEntryIdx === idx && !isEditingTagName && selectedPerson?.id !== 1 && (
+                          <Edit2 size={12} className="opacity-60 hover:opacity-100" onClick={(e) => { e.stopPropagation(); startRenameTag(); }} />
+                        )}
                       </button>
+                      {entries.length > 1 && selectedPerson?.id !== 1 && (
+                        <button 
+                          onClick={() => removeTag(idx)}
+                          className="ml-1 p-1 text-[var(--color-calendar-text-dim)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {selectedPerson?.id !== 1 && (
+                    <button 
+                      onClick={addTag}
+                      className="p-1.5 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/10 rounded-lg transition-colors ml-2"
+                      title="添加新标签"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {selectedPerson?.id === 1 ? (
+                <div className="flex-1 overflow-y-auto p-6 bg-[var(--color-calendar-page-bg)]/50">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {getSummaryDataForDay(selectedDay!).map(({ person, note }) => (
+                      <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-shadow">
+                        <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30">
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
+                            {person.name[0]}
+                          </div>
+                          <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
+                        </div>
+                        <div className="p-4 space-y-5 flex-1">
+                          {note.entries.map((entry, eIdx) => (
+                            <div key={eIdx} className="space-y-3 pb-4 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
+                              {entry.tag && (
+                                <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
+                                  {entry.tag}
+                                </span>
+                              )}
+                              <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
+                                {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
+                              </p>
+                              {entry.images && entry.images.length > 0 && (
+                                <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                                  {entry.images.map((img, iIdx) => (
+                                    <div key={iIdx} className="flex-shrink-0 w-28 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
+                                      <img src={img} alt="record" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {getSummaryDataForDay(selectedDay!).length === 0 && (
+                      <div className="col-span-full py-24 flex flex-col items-center justify-center text-[var(--color-calendar-text-dim)] gap-4">
+                        <div className="w-20 h-20 rounded-full bg-[var(--color-calendar-surface-hover)] flex items-center justify-center">
+                          <Users size={40} className="opacity-20" />
+                        </div>
+                        <p className="text-sm font-medium">该日期暂无任何人员记录</p>
+                      </div>
                     )}
                   </div>
-                ))}
-                <button 
-                  onClick={addTag}
-                  className="p-1.5 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/10 rounded-lg transition-colors ml-2"
-                  title="添加新标签"
-                >
-                  <Plus size={18} />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {selectedPerson?.id === 1 && (
-                  <div className="p-3 bg-[var(--color-calendar-accent)]/10 border border-[var(--color-calendar-accent)]/20 rounded-lg text-xs text-[var(--color-calendar-accent)] flex items-center gap-2">
-                    <Users size={14} />
-                    当前处于汇总模式，您可以查看所有人员的记录，但无法在此模式下进行修改。
-                  </div>
-                )}
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
                 {/* Tag Name Editor */}
                 {isEditingTagName && (
                   <div className="flex items-center gap-2 p-3 bg-[var(--color-calendar-accent)]/10 rounded-lg border border-[var(--color-calendar-accent)]/30">
@@ -849,7 +1056,9 @@ export default function App() {
                   </label>
                   <textarea 
                     value={entries[activeEntryIdx]?.content || ''}
+                    readOnly={selectedPerson?.id === 1}
                     onChange={(e) => {
+                      if (selectedPerson?.id === 1) return;
                       const val = e.target.value;
                       setEntries(prev => {
                         const updated = [...prev];
@@ -857,8 +1066,11 @@ export default function App() {
                         return updated;
                       });
                     }}
-                    placeholder="在此输入相关记录..."
-                    className="w-full h-32 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg p-4 text-sm focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors resize-none"
+                    placeholder={selectedPerson?.id === 1 ? "汇总模式不可编辑" : "在此输入相关记录..."}
+                    className={cn(
+                      "w-full h-32 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg p-4 text-sm focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors resize-none",
+                      selectedPerson?.id === 1 && "cursor-default opacity-80"
+                    )}
                   />
                 </div>
 
@@ -866,32 +1078,37 @@ export default function App() {
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-[var(--color-calendar-text-muted)] uppercase tracking-wider">截图/图片 ({entries[activeEntryIdx]?.images.length || 0})</label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                    {entries[activeEntryIdx]?.images.map((img, imgIdx) => (
-                      <div key={imgIdx} className="relative group aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] bg-[var(--color-calendar-page-bg)]">
-                        <img 
-                          src={img} 
-                          alt={`upload-${imgIdx}`} 
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                        <button 
-                          onClick={() => removeImage(imgIdx)}
-                          className="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-                    <label className="aspect-video border-2 border-dashed border-[var(--color-calendar-border)] hover:border-[var(--color-calendar-accent)]/50 hover:bg-[var(--color-calendar-accent)]/5 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group">
-                      <div className="p-2 bg-[var(--color-calendar-surface-hover)] rounded-full group-hover:bg-[var(--color-calendar-accent)]/20 transition-colors">
-                        <Plus size={20} className="text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-accent)]" />
-                      </div>
-                      <span className="text-[10px] text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-text)]">添加图片</span>
-                      <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
-                    </label>
+                        {entries[activeEntryIdx]?.images.map((img, imgIdx) => (
+                          <div key={imgIdx} className="relative group aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] bg-[var(--color-calendar-page-bg)]">
+                            <img 
+                              src={img} 
+                              alt={`upload-${imgIdx}`} 
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                            {selectedPerson?.id !== 1 && (
+                              <button 
+                                onClick={() => removeImage(imgIdx)}
+                                className="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {selectedPerson?.id !== 1 && (
+                          <label className="aspect-video border-2 border-dashed border-[var(--color-calendar-border)] hover:border-[var(--color-calendar-accent)]/50 hover:bg-[var(--color-calendar-accent)]/5 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group">
+                            <div className="p-2 bg-[var(--color-calendar-surface-hover)] rounded-full group-hover:bg-[var(--color-calendar-accent)]/20 transition-colors">
+                              <Plus size={20} className="text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-accent)]" />
+                            </div>
+                            <span className="text-[10px] text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-text)]">添加图片</span>
+                            <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
+                          </label>
+                        )}
                   </div>
                 </div>
               </div>
+            )}
 
               <div className="flex items-center justify-between px-6 py-4 bg-[var(--color-calendar-surface)] border-t border-[var(--color-calendar-border)]">
                 <button 
@@ -1247,6 +1464,43 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">数据管理</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={exportToJson}
+                      className="flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
+                    >
+                      <Download size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
+                      导出备份 (JSON)
+                    </button>
+                    <div className="relative">
+                      <input 
+                        type="file" 
+                        accept=".json"
+                        onChange={handleImport}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      />
+                      <button
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
+                      >
+                        <Upload size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
+                        导入备份
+                      </button>
+                    </div>
+                    <button
+                      onClick={exportToHtml}
+                      className="col-span-2 flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
+                    >
+                      <FileText size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
+                      导出文档报告 (HTML/Word)
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-[var(--color-calendar-text-dim)] px-1">
+                    * HTML 报告可直接在浏览器查看，或使用 Word 打开进行编辑。
+                  </p>
                 </div>
 
                 <div className="p-4 bg-[var(--color-calendar-surface-hover)] rounded-xl border border-[var(--color-calendar-border)] space-y-2">
