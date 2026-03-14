@@ -1,18 +1,55 @@
 @import "tailwindcss";
 
-@theme {
+:root {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --color-calendar-bg: #1a1a1a;
-  --color-calendar-border: #333333;
-  --color-calendar-text: #e5e5e5;
-  --color-calendar-muted: #888888;
-  --color-calendar-accent: #3b82f6;
+  --calendar-accent: #3b82f6;
+  
+  /* Dark Theme Defaults */
+  --calendar-page-bg: color-mix(in srgb, var(--calendar-accent), #000 96%);
+  --calendar-sidebar-bg: color-mix(in srgb, var(--calendar-accent), #000 94%);
+  --calendar-surface: color-mix(in srgb, var(--calendar-accent), #000 90%);
+  --calendar-surface-hover: color-mix(in srgb, var(--calendar-accent), #000 85%);
+  --calendar-border: color-mix(in srgb, var(--calendar-accent), transparent 85%);
+  --calendar-text: #e5e5e5;
+  --calendar-text-secondary: color-mix(in srgb, var(--calendar-accent), #aaa 10%);
+  --calendar-text-muted: color-mix(in srgb, var(--calendar-accent), #888 10%);
+  --calendar-text-dim: color-mix(in srgb, var(--calendar-accent), #555 10%);
+  --calendar-muted: #888888;
+}
+
+[data-theme='light'] {
+  --calendar-page-bg: #f8fafc;
+  --calendar-sidebar-bg: #ffffff;
+  --calendar-surface: #ffffff;
+  --calendar-surface-hover: #f1f5f9;
+  --calendar-border: #e2e8f0;
+  --calendar-text: #0f172a;
+  --calendar-text-secondary: #475569;
+  --calendar-text-muted: #64748b;
+  --calendar-text-dim: #94a3b8;
+  --calendar-muted: #94a3b8;
+}
+
+@theme {
+  --font-sans: var(--font-sans);
+  --color-calendar-accent: var(--calendar-accent);
+  --color-calendar-page-bg: var(--calendar-page-bg);
+  --color-calendar-sidebar-bg: var(--calendar-sidebar-bg);
+  --color-calendar-surface: var(--calendar-surface);
+  --color-calendar-surface-hover: var(--calendar-surface-hover);
+  --color-calendar-border: var(--calendar-border);
+  --color-calendar-text: var(--calendar-text);
+  --color-calendar-text-secondary: var(--calendar-text-secondary);
+  --color-calendar-text-muted: var(--calendar-text-muted);
+  --color-calendar-text-dim: var(--calendar-text-dim);
+  --color-calendar-muted: var(--calendar-muted);
 }
 
 body {
-  background-color: #121212;
-  color: var(--color-calendar-text);
+  background-color: var(--calendar-page-bg);
+  color: var(--calendar-text);
   font-family: var(--font-sans);
+  transition: background-color 0.3s, color 0.3s;
 }
 
 .calendar-grid {
@@ -31,11 +68,11 @@ body {
 }
 
 .calendar-cell:hover {
-  background-color: #252525;
+  background-color: var(--color-calendar-surface-hover);
 }
 
 .calendar-cell.today {
-  background-color: rgba(59, 130, 246, 0.05);
+  background-color: color-mix(in srgb, var(--color-calendar-accent), transparent 95%);
 }
 
 .calendar-cell.other-month {
