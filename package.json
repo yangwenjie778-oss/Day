@@ -11,7 +11,9 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "electron:dev": "NODE_ENV=development electron .",
-    "electron:build": "npm run build && electron-builder"
+    "electron:build": "npm run build && electron-builder",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "build": {
     "appId": "com.example.calendar-app",
@@ -32,6 +34,10 @@
   "dependencies": {
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
+    "@tauri-apps/plugin-window-state": "^2.4.1",
     "@vitejs/plugin-react": "^5.0.4",
     "better-sqlite3": "^12.4.1",
     "clsx": "^2.1.1",
@@ -46,6 +52,7 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",

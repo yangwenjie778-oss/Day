@@ -15,6 +15,8 @@ import {
   getYear,
   getMonth
 } from 'date-fns';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -219,8 +221,11 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Check if running in Tauri
+  const isTauri = !!(window as any).__TAURI__;
+
   // --- Export/Import Logic ---
-  const exportToJson = () => {
+  const exportToJson = async () => {
     const data = {
       people: getLocalPeople(),
       notes: getLocalNotes(),
@@ -228,16 +233,36 @@ export default function App() {
       themeMode: themeMode,
       exportDate: new Date().toISOString()
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const jsonStr = JSON.stringify(data, null, 2);
+    const fileName = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
+
+    if (isTauri) {
+      try {
+        const filePath = await save({
+          defaultPath: fileName,
+          filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+        if (filePath) {
+          await writeTextFile(filePath, jsonStr);
+        }
+      } catch (error) {
+        console.error('Tauri export error:', error);
+        alert('导出失败，请检查权限设置');
+      }
+    } else {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
-  const exportToHtml = () => {
+  const exportToHtml = async () => {
     const peopleData = getLocalPeople();
     const notesData = getLocalNotes();
     
@@ -318,13 +343,32 @@ export default function App() {
       </html>
     `;
 
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const fileName = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
+
+    if (isTauri) {
+      try {
+        const filePath = await save({
+          defaultPath: fileName,
+          filters: [{ name: 'HTML', extensions: ['html'] }]
+        });
+        if (filePath) {
+          await writeTextFile(filePath, htmlContent);
+        }
+      } catch (error) {
+        console.error('Tauri export error:', error);
+        alert('导出失败，请检查权限设置');
+      }
+    } else {
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -915,7 +959,7 @@ export default function App() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className={cn(
-                "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transition-all duration-300",
+                "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
                 selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
               )}
             >
