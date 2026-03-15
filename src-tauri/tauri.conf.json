@@ -11,7 +11,17 @@
   },
   "tauri": {
     "allowlist": {
-      "all": true
+      "all": true,
+      "dialog": {
+        "all": true,
+        "save": true
+      },
+      "fs": {
+        "all": true,
+        "writeFile": true,
+        "writeBinaryFile": true,
+        "scope": ["$APPDATA/*", "$DOCUMENT/*", "$DOWNLOAD/*", "$DESKTOP/*"]
+      }
     },
     "bundle": {
       "active": true,
