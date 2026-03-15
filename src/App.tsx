@@ -15,8 +15,8 @@ import {
   getYear,
   getMonth
 } from 'date-fns';
-import { save } from '@tauri-apps/api/dialog';
-import { writeTextFile } from '@tauri-apps/api/fs';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { 
   ChevronLeft, 
   ChevronRight, 
