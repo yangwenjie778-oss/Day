@@ -1,7 +1,7 @@
 {
   "productName": "智能日历记录",
   "version": "0.1.0",
-  "identifier": "com.calendar.app",
+  "identifier": "com.smart.calendar",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -11,6 +11,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "智能日历记录",
         "width": 1200,
         "height": 800,
