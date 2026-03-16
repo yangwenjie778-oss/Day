@@ -15,6 +15,8 @@ import {
   getYear,
   getMonth
 } from 'date-fns';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -149,11 +151,14 @@ const CalendarDayCell = React.memo(({
   const isToday = isSameDay(day.date, new Date());
   
   return (
-    <div 
+    <motion.div 
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
       onClick={() => onClick(day.date)}
       onContextMenu={(e) => onContextMenu(e, day.date)}
       className={cn(
-        "min-h-[100px] p-2 border-r border-b border-[var(--color-calendar-border)] transition-colors cursor-pointer group relative overflow-hidden",
+        "min-h-[100px] p-2 border-r border-b border-[var(--color-calendar-border)] transition-all cursor-pointer group relative overflow-hidden",
         !day.isCurrentMonth && "bg-[var(--color-calendar-page-bg)] opacity-30",
         day.isCurrentMonth && "bg-[var(--color-calendar-surface)] hover:bg-[var(--color-calendar-surface-hover)]",
         isSelected && "ring-2 ring-inset ring-[var(--color-calendar-accent)] bg-[var(--color-calendar-accent)]/5 z-10"
@@ -192,7 +197,7 @@ const CalendarDayCell = React.memo(({
           <p className="text-[9px] text-[var(--color-calendar-accent)] font-bold">+{note.entries.length - 3} 更多...</p>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 });
 
@@ -216,8 +221,11 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Check if running in Tauri
+  const isTauri = !!(window as any).__TAURI__;
+
   // --- Export/Import Logic ---
-  const exportToJson = () => {
+  const exportToJson = async () => {
     const data = {
       people: getLocalPeople(),
       notes: getLocalNotes(),
@@ -225,16 +233,36 @@ export default function App() {
       themeMode: themeMode,
       exportDate: new Date().toISOString()
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const jsonStr = JSON.stringify(data, null, 2);
+    const fileName = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
+
+    if (isTauri) {
+      try {
+        const filePath = await save({
+          defaultPath: fileName,
+          filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+        if (filePath) {
+          await writeTextFile(filePath, jsonStr);
+        }
+      } catch (error) {
+        console.error('Tauri export error:', error);
+        alert('导出失败，请检查权限设置');
+      }
+    } else {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
-  const exportToHtml = () => {
+  const exportToHtml = async () => {
     const peopleData = getLocalPeople();
     const notesData = getLocalNotes();
     
@@ -315,13 +343,32 @@ export default function App() {
       </html>
     `;
 
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const fileName = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
+
+    if (isTauri) {
+      try {
+        const filePath = await save({
+          defaultPath: fileName,
+          filters: [{ name: 'HTML', extensions: ['html'] }]
+        });
+        if (filePath) {
+          await writeTextFile(filePath, htmlContent);
+        }
+      } catch (error) {
+        console.error('Tauri export error:', error);
+        alert('导出失败，请检查权限设置');
+      }
+    } else {
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -486,6 +533,45 @@ export default function App() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Close modals on Esc key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isModalOpen) setIsModalOpen(false);
+        if (isSearchModalOpen) setIsSearchModalOpen(false);
+        if (isAddPersonModalOpen) setIsAddPersonModalOpen(false);
+        if (isSettingsOpen) setIsSettingsOpen(false);
+        if (isPickerOpen) setIsPickerOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModalOpen, isSearchModalOpen, isAddPersonModalOpen, isSettingsOpen, isPickerOpen]);
+
+  // Auto-save notes when entries change
+  useEffect(() => {
+    if (!isModalOpen || !selectedDay || !selectedPerson || selectedPerson.id === 1) return;
+
+    const dateStr = format(selectedDay, 'yyyy-MM-dd');
+    const storageKey = `${selectedPerson.id}_${dateStr}`;
+    
+    const allNotes = getLocalNotes();
+    const newNote: Note = {
+      id: Date.now(),
+      person_id: selectedPerson.id,
+      date: dateStr,
+      entries: entries
+    };
+    
+    allNotes[storageKey] = newNote;
+    saveLocalNotes(allNotes);
+    
+    setNotes(prev => ({
+      ...prev,
+      [dateStr]: newNote
+    }));
+  }, [entries, isModalOpen, selectedDay, selectedPerson]);
 
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentDate);
@@ -906,12 +992,11 @@ export default function App() {
       {/* Note Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              transition={{ type: "spring", damping: 25, stiffness: 300 }}
               className={cn(
                 "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
                 selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
@@ -1123,23 +1208,10 @@ export default function App() {
                 <div className="flex gap-3">
                   <button 
                     onClick={() => setIsModalOpen(false)}
-                    className="px-6 py-2 text-sm font-medium hover:bg-[var(--color-calendar-surface-hover)] rounded-lg transition-colors"
+                    className="px-8 py-2 text-sm font-medium bg-[var(--color-calendar-accent)] text-white hover:opacity-90 rounded-lg transition-all shadow-lg"
                   >
                     关闭
                   </button>
-                  {selectedPerson?.id !== 1 && (
-                    <button 
-                      onClick={saveNote}
-                      disabled={isSubmitting}
-                      className={cn(
-                        "flex items-center gap-2 px-6 py-2 bg-[var(--color-calendar-accent)] hover:opacity-90 text-white rounded-lg transition-colors text-sm font-medium shadow-lg",
-                        isSubmitting && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
-                      <Save size={18} />
-                      {isSubmitting ? '保存中...' : '保存全部更改'}
-                    </button>
-                  )}
                 </div>
               </div>
             </motion.div>
@@ -1161,7 +1233,7 @@ export default function App() {
       {/* Add Person Modal */}
       <AnimatePresence>
         {isAddPersonModalOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1214,7 +1286,7 @@ export default function App() {
       {/* Search Modal */}
       <AnimatePresence>
         {isSearchModalOpen && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
             <motion.div 
               initial={{ opacity: 0, y: -20, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1368,7 +1440,7 @@ export default function App() {
 
         {/* Settings Modal */}
         {isSettingsOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
