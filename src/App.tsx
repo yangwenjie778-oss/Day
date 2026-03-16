@@ -265,12 +265,18 @@ export default function App() {
     const peopleData = getLocalPeople();
     const notesData = getLocalNotes();
     
-    // Sort notes by date (chronological)
-    const sortedKeys = Object.keys(notesData).sort((a, b) => {
-      const dateA = a.includes('_') ? a.split('_')[1] : a;
-      const dateB = b.includes('_') ? b.includes('_') ? b.split('_')[1] : b : b;
-      return dateA.localeCompare(dateB);
+    // Group notes by date
+    const groupedByDate: Record<string, Note[]> = {};
+    Object.entries(notesData).forEach(([key, note]) => {
+      const date = key.includes('_') ? key.split('_')[1] : key;
+      if (!groupedByDate[date]) {
+        groupedByDate[date] = [];
+      }
+      groupedByDate[date].push(note);
     });
+
+    // Sort dates (chronological)
+    const sortedDates = Object.keys(groupedByDate).sort((a, b) => a.localeCompare(b));
     
     let htmlContent = `
       <!DOCTYPE html>
@@ -279,23 +285,137 @@ export default function App() {
         <meta charset="UTF-8">
         <title>日历记录导出报告</title>
         <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 0 auto; padding: 40px; background: #f4f7f6; }
-          .header { text-align: center; margin-bottom: 40px; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-          h1 { margin: 0; color: #1e40af; font-size: 2.5em; }
-          .meta { color: #6b7280; margin-top: 10px; }
-          .note-card { background: white; border-radius: 12px; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 5px solid #3b82f6; }
-          .date { font-weight: 800; font-size: 1.4em; color: #1e3a8a; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
-          .person { font-weight: 600; color: #4b5563; margin-bottom: 20px; font-size: 0.9em; background: #f3f4f6; display: inline-block; padding: 4px 12px; border-radius: 20px; }
-          .entry { margin-bottom: 20px; border-top: 1px solid #f3f4f6; padding-top: 15px; }
-          .tag { display: inline-block; background: #eff6ff; color: #2563eb; padding: 3px 10px; border-radius: 6px; font-size: 0.75em; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
-          .content { white-space: pre-wrap; margin-top: 8px; font-size: 1.05em; color: #1f2937; }
-          .images { display: flex; gap: 12px; margin-top: 15px; flex-wrap: wrap; }
-          .img-container { width: 200px; height: 130px; overflow: hidden; border-radius: 8px; border: 1px solid #e5e7eb; transition: transform 0.2s; }
-          .img-container:hover { transform: scale(1.02); }
+          :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+          }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            line-height: 1.6; 
+            color: var(--text); 
+            max-width: 1000px; 
+            margin: 0 auto; 
+            padding: 40px 20px; 
+            background: var(--bg); 
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 40px; 
+            background: var(--card-bg); 
+            padding: 40px; 
+            border-radius: 16px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03); 
+            border: 1px solid var(--border);
+          }
+          h1 { margin: 0; color: var(--primary); font-size: 2.5em; font-weight: 800; }
+          .meta { color: var(--text-muted); margin-top: 12px; font-size: 0.95em; }
+          
+          .date-section { 
+            margin-bottom: 40px; 
+          }
+          .date-header {
+            font-size: 1.8em;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid var(--primary);
+          }
+          
+          .notes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+            gap: 20px;
+          }
+          @media (max-width: 600px) {
+            .notes-grid { grid-template-columns: 1fr; }
+          }
+
+          .note-card { 
+            background: var(--card-bg); 
+            border-radius: 12px; 
+            padding: 24px; 
+            box-shadow: 0 2px 12px rgba(0,0,0,0.04); 
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+          }
+          .person-info { 
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px dashed var(--border);
+          }
+          .person-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.8em;
+          }
+          .person-name { 
+            font-weight: 700; 
+            color: var(--text); 
+            font-size: 1.1em;
+          }
+          
+          .entry { 
+            margin-bottom: 20px; 
+            padding: 12px;
+            background: #f1f5f9;
+            border-radius: 8px;
+          }
+          .entry:last-child { margin-bottom: 0; }
+          
+          .tag { 
+            display: inline-block; 
+            background: var(--primary); 
+            color: white; 
+            padding: 2px 8px; 
+            border-radius: 4px; 
+            font-size: 0.7em; 
+            font-weight: 700; 
+            margin-bottom: 8px; 
+            text-transform: uppercase; 
+          }
+          .content { 
+            white-space: pre-wrap; 
+            font-size: 1em; 
+            color: var(--text); 
+          }
+          .images { 
+            display: flex; 
+            gap: 10px; 
+            margin-top: 12px; 
+            flex-wrap: wrap; 
+          }
+          .img-container { 
+            width: 120px; 
+            height: 80px; 
+            overflow: hidden; 
+            border-radius: 6px; 
+            border: 1px solid var(--border); 
+          }
           .img-container img { width: 100%; height: 100%; object-fit: cover; }
+          
           @media print {
             body { background: white; padding: 0; }
-            .note-card { box-shadow: none; border: 1px solid #eee; page-break-inside: avoid; }
+            .header, .note-card { box-shadow: none; border: 1px solid #eee; }
+            .date-section { page-break-inside: avoid; }
           }
         </style>
       </head>
@@ -303,40 +423,63 @@ export default function App() {
         <div class="header">
           <h1>日历记录报告</h1>
           <div class="meta">导出时间: ${format(new Date(), 'yyyy年MM月dd日 HH:mm:ss')}</div>
+          <div class="meta">共计 ${sortedDates.length} 天有记录</div>
         </div>
     `;
 
-    sortedKeys.forEach(key => {
-      const note = notesData[key];
-      const person = peopleData.find(p => p.id === note.person_id);
-      const displayDate = key.includes('_') ? key.split('_')[1] : key;
+    sortedDates.forEach(date => {
+      const notes = groupedByDate[date];
       
       htmlContent += `
-        <div class="note-card">
-          <div class="date">${displayDate}</div>
-          <div class="person">记录人: ${person ? person.name : '未知'}</div>
-          ${note.entries.map(entry => `
-            <div class="entry">
-              ${entry.tag ? `<div class="tag">${entry.tag}</div>` : ''}
-              <div class="content">${entry.content || '(无文字内容)'}</div>
-              ${entry.images && entry.images.length > 0 ? `
-                <div class="images">
-                  ${entry.images.map(img => `
-                    <div class="img-container">
-                      <img src="${img}" alt="图片">
-                    </div>
-                  `).join('')}
-                </div>
-              ` : ''}
+        <div class="date-section">
+          <div class="date-header">
+            <span>📅 ${date}</span>
+            <span style="font-size: 0.5em; background: #e2e8f0; padding: 4px 12px; border-radius: 20px; color: #475569;">
+              ${notes.length} 人记录
+            </span>
+          </div>
+          <div class="notes-grid">
+      `;
+
+      notes.forEach(note => {
+        const person = peopleData.find(p => p.id === note.person_id);
+        const personName = person ? person.name : '未知';
+        const initial = personName.charAt(0);
+
+        htmlContent += `
+          <div class="note-card">
+            <div class="person-info">
+              <div class="person-avatar">${initial}</div>
+              <div class="person-name">${personName}</div>
             </div>
-          `).join('')}
+            ${note.entries.map(entry => `
+              <div class="entry">
+                ${entry.tag ? `<div class="tag">${entry.tag}</div>` : ''}
+                <div class="content">${entry.content || '(无文字内容)'}</div>
+                ${entry.images && entry.images.length > 0 ? `
+                  <div class="images">
+                    ${entry.images.map(img => `
+                      <div class="img-container">
+                        <img src="${img}" alt="图片">
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      });
+
+      htmlContent += `
+          </div>
         </div>
       `;
     });
 
     htmlContent += `
-        <div style="text-align: center; margin-top: 50px; color: #9ca3af; font-size: 0.8em;">
-          由日历应用自动生成
+        <div style="text-align: center; margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.85em;">
+          由智能日历应用自动生成 • ${new Date().getFullYear()}
         </div>
       </body>
       </html>
