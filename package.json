@@ -13,8 +13,9 @@
     "electron:dev": "NODE_ENV=development electron .",
     "electron:build": "npm run build && electron-builder",
     "electron:package": "npm run build && electron-packager . --platform=win32 --arch=x64 --out=out --overwrite",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "npx tauri dev",
+    "tauri:build": "npx tauri build",
+    "tauri:package": "npm run build && npx tauri build"
   },
   "build": {
     "appId": "com.example.calendar-app",
