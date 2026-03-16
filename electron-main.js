@@ -10,7 +10,8 @@ function createWindow() {
   // Load the previous state with default window bounds
   let mainWindowState = windowStateKeeper({
     defaultWidth: 1200,
-    defaultHeight: 800
+    defaultHeight: 800,
+    file: 'window-state.json' // Explicitly set filename for persistence
   });
 
   // Create the browser window using the state information

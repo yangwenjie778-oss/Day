@@ -15,8 +15,6 @@ import {
   getYear,
   getMonth
 } from 'date-fns';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -151,14 +149,11 @@ const CalendarDayCell = React.memo(({
   const isToday = isSameDay(day.date, new Date());
   
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
+    <div 
       onClick={() => onClick(day.date)}
       onContextMenu={(e) => onContextMenu(e, day.date)}
       className={cn(
-        "min-h-[100px] p-2 border-r border-b border-[var(--color-calendar-border)] transition-all cursor-pointer group relative overflow-hidden",
+        "min-h-[100px] p-2 border-r border-b border-[var(--color-calendar-border)] transition-colors cursor-pointer group relative overflow-hidden",
         !day.isCurrentMonth && "bg-[var(--color-calendar-page-bg)] opacity-30",
         day.isCurrentMonth && "bg-[var(--color-calendar-surface)] hover:bg-[var(--color-calendar-surface-hover)]",
         isSelected && "ring-2 ring-inset ring-[var(--color-calendar-accent)] bg-[var(--color-calendar-accent)]/5 z-10"
@@ -197,7 +192,7 @@ const CalendarDayCell = React.memo(({
           <p className="text-[9px] text-[var(--color-calendar-accent)] font-bold">+{note.entries.length - 3} 更多...</p>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 });
 
@@ -221,11 +216,8 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Check if running in Tauri
-  const isTauri = !!(window as any).__TAURI__;
-
   // --- Export/Import Logic ---
-  const exportToJson = async () => {
+  const exportToJson = () => {
     const data = {
       people: getLocalPeople(),
       notes: getLocalNotes(),
@@ -233,36 +225,16 @@ export default function App() {
       themeMode: themeMode,
       exportDate: new Date().toISOString()
     };
-    const jsonStr = JSON.stringify(data, null, 2);
-    const fileName = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
-
-    if (isTauri) {
-      try {
-        const filePath = await save({
-          defaultPath: fileName,
-          filters: [{ name: 'JSON', extensions: ['json'] }]
-        });
-        if (filePath) {
-          await writeTextFile(filePath, jsonStr);
-        }
-      } catch (error) {
-        console.error('Tauri export error:', error);
-        alert('导出失败，请检查权限设置');
-      }
-    } else {
-      const blob = new Blob([jsonStr], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const exportToHtml = async () => {
+  const exportToHtml = () => {
     const peopleData = getLocalPeople();
     const notesData = getLocalNotes();
     
@@ -343,32 +315,13 @@ export default function App() {
       </html>
     `;
 
-    const fileName = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
-
-    if (isTauri) {
-      try {
-        const filePath = await save({
-          defaultPath: fileName,
-          filters: [{ name: 'HTML', extensions: ['html'] }]
-        });
-        if (filePath) {
-          await writeTextFile(filePath, htmlContent);
-        }
-      } catch (error) {
-        console.error('Tauri export error:', error);
-        alert('导出失败，请检查权限设置');
-      }
-    } else {
-      const blob = new Blob([htmlContent], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -953,11 +906,12 @@ export default function App() {
       {/* Note Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
               className={cn(
                 "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
                 selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
@@ -1207,7 +1161,7 @@ export default function App() {
       {/* Add Person Modal */}
       <AnimatePresence>
         {isAddPersonModalOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1260,7 +1214,7 @@ export default function App() {
       {/* Search Modal */}
       <AnimatePresence>
         {isSearchModalOpen && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80">
             <motion.div 
               initial={{ opacity: 0, y: -20, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1414,7 +1368,7 @@ export default function App() {
 
         {/* Settings Modal */}
         {isSettingsOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

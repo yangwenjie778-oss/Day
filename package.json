@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit",
     "electron:dev": "NODE_ENV=development electron .",
     "electron:build": "npm run build && electron-builder",
+    "electron:package": "npm run build && electron-packager . --platform=win32 --arch=x64 --out=out --overwrite",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
@@ -58,6 +59,7 @@
     "autoprefixer": "^10.4.21",
     "electron": "^41.0.2",
     "electron-builder": "^26.8.1",
+    "electron-packager": "^17.1.2",
     "electron-window-state": "^5.0.3",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
