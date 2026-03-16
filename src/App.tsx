@@ -15,8 +15,7 @@ import {
   getYear,
   getMonth
 } from 'date-fns';
-import { save } from '@tauri-apps/api/dialog';
-import { writeTextFile } from '@tauri-apps/api/fs';
+import { dialog, fs } from '@tauri-apps/api';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -238,12 +237,12 @@ export default function App() {
 
     if (isTauri) {
       try {
-        const filePath = await save({
+        const filePath = await dialog.save({
           defaultPath: fileName,
           filters: [{ name: 'JSON', extensions: ['json'] }]
         });
         if (filePath) {
-          await writeTextFile(filePath, jsonStr);
+          await fs.writeTextFile(filePath, jsonStr);
         }
       } catch (error) {
         console.error('Tauri export error:', error);
@@ -347,12 +346,12 @@ export default function App() {
 
     if (isTauri) {
       try {
-        const filePath = await save({
+        const filePath = await dialog.save({
           defaultPath: fileName,
           filters: [{ name: 'HTML', extensions: ['html'] }]
         });
         if (filePath) {
-          await writeTextFile(filePath, htmlContent);
+          await fs.writeTextFile(filePath, htmlContent);
         }
       } catch (error) {
         console.error('Tauri export error:', error);
