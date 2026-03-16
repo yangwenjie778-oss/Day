@@ -265,14 +265,26 @@ export default function App() {
     const peopleData = getLocalPeople();
     const notesData = getLocalNotes();
     
-    // Group notes by date
+    // Group notes by date and filter out entries that have neither text nor images
     const groupedByDate: Record<string, Note[]> = {};
     Object.entries(notesData).forEach(([key, note]) => {
       const date = key.includes('_') ? key.split('_')[1] : key;
-      if (!groupedByDate[date]) {
-        groupedByDate[date] = [];
+      
+      // Filter entries to include those with text OR images
+      const validEntries = note.entries.filter(entry => 
+        (entry.content && entry.content.trim() !== '') || 
+        (entry.images && entry.images.length > 0)
+      );
+      
+      if (validEntries.length > 0) {
+        if (!groupedByDate[date]) {
+          groupedByDate[date] = [];
+        }
+        groupedByDate[date].push({
+          ...note,
+          entries: validEntries
+        });
       }
-      groupedByDate[date].push(note);
     });
 
     // Sort dates (chronological)
@@ -423,7 +435,7 @@ export default function App() {
         <div class="header">
           <h1>日历记录报告</h1>
           <div class="meta">导出时间: ${format(new Date(), 'yyyy年MM月dd日 HH:mm:ss')}</div>
-          <div class="meta">共计 ${sortedDates.length} 天有记录</div>
+          <div class="meta">共计 ${sortedDates.length} 天有内容记录</div>
         </div>
     `;
 
@@ -455,7 +467,7 @@ export default function App() {
             ${note.entries.map(entry => `
               <div class="entry">
                 ${entry.tag ? `<div class="tag">${entry.tag}</div>` : ''}
-                <div class="content">${entry.content || '(无文字内容)'}</div>
+                ${entry.content && entry.content.trim() !== '' ? `<div class="content">${entry.content}</div>` : ''}
                 ${entry.images && entry.images.length > 0 ? `
                   <div class="images">
                     ${entry.images.map(img => `
