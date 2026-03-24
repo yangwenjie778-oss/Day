@@ -15,6 +15,7 @@ import {
   getYear,
   getMonth
 } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
 import { dialog, fs } from '@tauri-apps/api';
 import { 
   ChevronLeft, 
@@ -200,6 +201,416 @@ const CalendarDayCell = React.memo(({
   );
 });
 
+const MonthSummaryModal = ({ 
+  currentDate, 
+  people, 
+  allNotes,
+  onClose 
+}: { 
+  currentDate: Date, 
+  people: Person[], 
+  allNotes: Record<string, Note>,
+  onClose: () => void 
+}) => {
+  const monthStart = startOfMonth(currentDate);
+  const monthEnd = endOfMonth(monthStart);
+  const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
+
+  const exportMonthToHtml = () => {
+    const fileName = `${format(currentDate, 'yyyy年M月')}_全员月度总结.html`;
+    
+    // Group notes by date and filter out entries that have neither text nor images
+    const groupedByDate: Record<string, { person: Person, note: Note }[]> = {};
+    
+    monthDays.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const dayEntries: { person: Person, note: Note }[] = [];
+      
+      people.slice(1).forEach(person => {
+        const key = `${person.id}_${dateStr}`;
+        const note = allNotes[key];
+        if (note && note.entries) {
+          const validEntries = note.entries.filter(e => 
+            (e.content && e.content.trim() !== '') || 
+            (e.images && e.images.length > 0)
+          );
+          if (validEntries.length > 0) {
+            dayEntries.push({ person, note: { ...note, entries: validEntries } });
+          }
+        }
+      });
+      
+      if (dayEntries.length > 0) {
+        groupedByDate[dateStr] = dayEntries;
+      }
+    });
+
+    const sortedDates = Object.keys(groupedByDate).sort((a, b) => a.localeCompare(b));
+    
+    let htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>${format(currentDate, 'yyyy年M月')} 全员月度总结</title>
+        <style>
+          :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+          }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            line-height: 1.6; 
+            color: var(--text); 
+            max-width: 1000px; 
+            margin: 0 auto; 
+            padding: 40px 20px; 
+            background: var(--bg); 
+          }
+          .header { 
+            text-align: center; 
+            margin-bottom: 40px; 
+            background: var(--card-bg); 
+            padding: 40px; 
+            border-radius: 16px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03); 
+            border: 1px solid var(--border);
+          }
+          h1 { margin: 0; color: var(--primary); font-size: 2.5em; font-weight: 800; }
+          .meta { color: var(--text-muted); margin-top: 12px; font-size: 0.95em; }
+          
+          .date-section { 
+            margin-bottom: 40px; 
+          }
+          .date-header {
+            font-size: 1.8em;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid var(--primary);
+          }
+          
+          .notes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+          }
+          
+          .note-card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+            transition: transform 0.2s;
+          }
+          
+          .person-header {
+            padding: 15px 20px;
+            background: #f8fafc;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+          }
+          
+          .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+          }
+          
+          .person-name {
+            font-weight: 700;
+            font-size: 15px;
+          }
+          
+          .note-content {
+            padding: 20px;
+            flex: 1;
+          }
+          
+          .entry {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px dashed var(--border);
+          }
+          .entry:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+          }
+          
+          .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #eff6ff;
+            color: var(--primary);
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+          }
+          
+          .text {
+            font-size: 14px;
+            white-space: pre-wrap;
+            margin-bottom: 12px;
+          }
+          
+          .images {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+          }
+          
+          .img-wrapper {
+            width: 120px;
+            height: 80px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+          }
+          
+          .img-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+          }
+          
+          @media print {
+            body { padding: 0; background: white; }
+            .header { box-shadow: none; border: 1px solid #eee; }
+            .note-card { break-inside: avoid; box-shadow: none; border: 1px solid #eee; }
+            .date-section { break-inside: avoid; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>${format(currentDate, 'yyyy年M月')} 全员月度总结</h1>
+          <div class="meta">导出时间: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</div>
+        </div>
+        
+        ${sortedDates.map(dateStr => {
+          const day = new Date(dateStr);
+          const entries = groupedByDate[dateStr];
+          return `
+            <div class="date-section">
+              <div class="date-header">
+                <span>${format(day, 'M月d日')}</span>
+                <span style="font-size: 0.6em; opacity: 0.6;">${format(day, 'EEEE', { locale: zhCN })}</span>
+              </div>
+              <div class="notes-grid">
+                ${entries.map(({ person, note }) => `
+                  <div class="note-card">
+                    <div class="person-header">
+                      <div class="avatar" style="background-color: ${person.avatar_color}">${person.name[0]}</div>
+                      <div class="person-name">${person.name}</div>
+                    </div>
+                    <div class="note-content">
+                      ${note.entries.map(entry => `
+                        <div class="entry">
+                          ${entry.tag ? `<div class="tag">${entry.tag}</div>` : ''}
+                          <div class="text">${entry.content || ''}</div>
+                          ${entry.images && entry.images.length > 0 ? `
+                            <div class="images">
+                              ${entry.images.map(img => `
+                                <div class="img-wrapper">
+                                  <img src="${img}" />
+                                </div>
+                              `).join('')}
+                            </div>
+                          ` : ''}
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  
+  return (
+    <div id="month-summary-modal-container" className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="w-full h-full max-w-[95vw] bg-[var(--color-calendar-sidebar-bg)] rounded-3xl border border border-[var(--color-calendar-border)] shadow-2xl flex flex-col overflow-hidden"
+      >
+        {/* Header */}
+        <div className="px-8 py-6 border-b border-[var(--color-calendar-border)] flex items-center justify-between bg-[var(--color-calendar-sidebar-bg)]/80 backdrop-blur-md sticky top-0 z-10 no-print">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-[var(--color-calendar-accent)]/20 flex items-center justify-center text-[var(--color-calendar-accent)]">
+              <CalendarIcon size={28} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-white">{format(currentDate, 'yyyy年M月')} 全员月度总结</h2>
+              <p className="text-sm text-[var(--color-calendar-text-muted)] mt-1">直观查看本月所有人员的日历记录</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={exportMonthToHtml}
+              className="flex items-center gap-2 px-4 py-2 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl text-sm font-bold transition-all border border-[var(--color-calendar-border)]"
+            >
+              <Download size={18} />
+              打印 / 导出
+            </button>
+            <button 
+              onClick={onClose}
+              className="p-3 hover:bg-[var(--color-calendar-surface-hover)] rounded-2xl transition-all text-[var(--color-calendar-text-muted)] hover:text-white"
+            >
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
+          {monthDays.map(day => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            const dayEntries: { person: Person, note: Note }[] = [];
+            
+            people.slice(1).forEach(person => {
+              const key = `${person.id}_${dateStr}`;
+              const note = allNotes[key];
+              if (note && note.entries) {
+                const validEntries = note.entries.filter(e => 
+                  (e.content && e.content.trim() !== '') || 
+                  (e.images && e.images.length > 0)
+                );
+                if (validEntries.length > 0) {
+                  dayEntries.push({ person, note: { ...note, entries: validEntries } });
+                }
+              }
+            });
+
+            if (dayEntries.length === 0) return null;
+
+            return (
+              <div key={dateStr} className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <div className="px-4 py-1.5 bg-[var(--color-calendar-accent)] text-white text-sm font-bold rounded-full shadow-lg shadow-[var(--color-calendar-accent)]/20">
+                    {format(day, 'M月d日')} {format(day, 'EEEE', { locale: zhCN })}
+                  </div>
+                  <div className="h-px flex-1 bg-gradient-to-r from-[var(--color-calendar-border)] to-transparent" />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
+                  {dayEntries.map(({ person, note }) => (
+                    <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-2xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all hover:border-[var(--color-calendar-accent)]/30 group">
+                      <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30 group-hover:bg-[var(--color-calendar-accent)]/5 transition-colors">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
+                          {person.name[0]}
+                        </div>
+                        <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
+                      </div>
+                      <div className="p-4 space-y-4 flex-1">
+                        {note.entries.map((entry, eIdx) => (
+                          <div key={eIdx} className="space-y-2 pb-3 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
+                            {entry.tag && (
+                              <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
+                                {entry.tag}
+                              </span>
+                            )}
+                            <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
+                              {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
+                            </p>
+                            {entry.images && entry.images.length > 0 && (
+                              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                                {entry.images.map((img, iIdx) => (
+                                  <div key={iIdx} className="flex-shrink-0 w-24 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
+                                    <img src={img} alt="record" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {monthDays.every(day => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            return !people.slice(1).some(person => {
+              const key = `${person.id}_${dateStr}`;
+              const note = allNotes[key];
+              return note && note.entries && note.entries.some(e => 
+                (e.content && e.content.trim() !== '') || 
+                (e.images && e.images.length > 0)
+              );
+            });
+          }) && (
+            <div className="h-[60vh] flex flex-col items-center justify-center text-[var(--color-calendar-text-dim)] gap-6">
+              <div className="w-32 h-32 rounded-full bg-[var(--color-calendar-surface-hover)] flex items-center justify-center">
+                <CalendarIcon size={64} className="opacity-10" />
+              </div>
+              <div className="text-center space-y-2">
+                <p className="text-xl font-bold text-white">本月暂无记录</p>
+                <p className="text-sm">当月所有人员都还没有添加任何日历备注</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 bg-[var(--color-calendar-sidebar-bg)] border-t border-[var(--color-calendar-border)] flex justify-between items-center no-print">
+           <div className="text-xs text-[var(--color-calendar-text-dim)]">
+             共计 {monthDays.length} 天 · {people.length - 1} 位人员
+           </div>
+           <button 
+            onClick={onClose}
+            className="px-8 py-3 bg-[var(--color-calendar-accent)] hover:opacity-90 rounded-2xl text-sm font-bold text-white transition-all shadow-lg shadow-[var(--color-calendar-accent)]/20"
+          >
+            返回日历
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [notes, setNotes] = useState<Record<string, Note>>({});
@@ -219,6 +630,7 @@ export default function App() {
   const [themeColor, setThemeColor] = useState('#3b82f6');
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isMonthSummaryOpen, setIsMonthSummaryOpen] = useState(false);
 
   // Check if running in Tauri
   const isTauri = !!(window as any).__TAURI__;
@@ -706,12 +1118,13 @@ export default function App() {
         if (isSearchModalOpen) setIsSearchModalOpen(false);
         if (isAddPersonModalOpen) setIsAddPersonModalOpen(false);
         if (isSettingsOpen) setIsSettingsOpen(false);
+        if (isMonthSummaryOpen) setIsMonthSummaryOpen(false);
         if (isPickerOpen) setIsPickerOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen, isSearchModalOpen, isAddPersonModalOpen, isSettingsOpen, isPickerOpen]);
+  }, [isModalOpen, isSearchModalOpen, isAddPersonModalOpen, isSettingsOpen, isMonthSummaryOpen, isPickerOpen]);
 
   // Auto-save notes when entries change
   useEffect(() => {
@@ -1141,6 +1554,13 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsMonthSummaryOpen(true)}
+              className="flex items-center gap-2 px-4 py-1.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/20 rounded-lg text-sm font-bold transition-all border border-[var(--color-calendar-accent)]/20 shadow-sm"
+            >
+              <FileText size={16} />
+              月总结
+            </button>
             <div className="flex bg-[var(--color-calendar-surface-hover)] rounded p-1">
               {['日', '周', '月', '列表'].map((view) => (
                 <button 
@@ -1642,6 +2062,18 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {/* Month Summary Modal */}
+        <AnimatePresence>
+          {isMonthSummaryOpen && (
+            <MonthSummaryModal 
+              currentDate={currentDate}
+              people={people}
+              allNotes={getLocalNotes()}
+              onClose={() => setIsMonthSummaryOpen(false)}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Settings Modal */}
         {isSettingsOpen && (
