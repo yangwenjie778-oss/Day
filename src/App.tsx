@@ -573,18 +573,28 @@ export default function App() {
   };
 
   const getLocalPeople = (): Person[] => {
-    const stored = localStorage.getItem(STORAGE_KEYS.PEOPLE);
-    if (!stored) {
-      const defaultPeople = [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
-      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(defaultPeople));
-      return defaultPeople;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.PEOPLE);
+      if (!stored) {
+        const defaultPeople = [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
+        localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(defaultPeople));
+        return defaultPeople;
+      }
+      return JSON.parse(stored);
+    } catch (e) {
+      console.error("Failed to parse people from localStorage", e);
+      return [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
     }
-    return JSON.parse(stored);
   };
 
   const getLocalNotes = (): Record<string, Note> => {
-    const stored = localStorage.getItem(STORAGE_KEYS.NOTES);
-    return stored ? JSON.parse(stored) : {};
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.NOTES);
+      return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+      console.error("Failed to parse notes from localStorage", e);
+      return {};
+    }
   };
 
   const saveLocalPeople = (newPeople: Person[]) => {
@@ -777,6 +787,41 @@ export default function App() {
 
       Promise.all(readers).then(newImages => {
         setEntries(prev => {
+          if (!prev[activeEntryIdx]) return prev;
+          const updated = [...prev];
+          updated[activeEntryIdx] = {
+            ...updated[activeEntryIdx],
+            images: [...updated[activeEntryIdx].images, ...newImages]
+          };
+          return updated;
+        });
+      });
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (selectedPerson?.id === 1) return;
+    const items = e.clipboardData.items;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) files.push(file);
+      }
+    }
+
+    if (files.length > 0) {
+      const readers = files.map((file: File) => {
+        return new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      });
+
+      Promise.all(readers).then(newImages => {
+        setEntries(prev => {
+          if (!prev[activeEntryIdx]) return prev;
           const updated = [...prev];
           updated[activeEntryIdx] = {
             ...updated[activeEntryIdx],
@@ -790,6 +835,7 @@ export default function App() {
 
   const removeImage = (imgIdx: number) => {
     setEntries(prev => {
+      if (!prev[activeEntryIdx]) return prev;
       const updated = [...prev];
       const newImages = [...updated[activeEntryIdx].images];
       newImages.splice(imgIdx, 1);
@@ -871,12 +917,14 @@ export default function App() {
   };
 
   const startRenameTag = () => {
+    if (!entries[activeEntryIdx]) return;
     setTempTagName(entries[activeEntryIdx].tag);
     setIsEditingTagName(true);
   };
 
   const confirmRenameTag = () => {
     setEntries(prev => {
+      if (!prev[activeEntryIdx]) return prev;
       const updated = [...prev];
       updated[activeEntryIdx] = { ...updated[activeEntryIdx], tag: tempTagName };
       return updated;
@@ -1151,6 +1199,7 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              onPaste={handlePaste}
               className={cn(
                 "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
                 selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
@@ -1225,7 +1274,7 @@ export default function App() {
               {selectedPerson?.id === 1 ? (
                 <div className="flex-1 overflow-y-auto p-6 bg-[var(--color-calendar-page-bg)]/50">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {getSummaryDataForDay(selectedDay!).map(({ person, note }) => (
+                    {selectedDay && getSummaryDataForDay(selectedDay).map(({ person, note }) => (
                       <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-shadow">
                         <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30">
                           <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
@@ -1258,7 +1307,7 @@ export default function App() {
                         </div>
                       </div>
                     ))}
-                    {getSummaryDataForDay(selectedDay!).length === 0 && (
+                    {selectedDay && getSummaryDataForDay(selectedDay).length === 0 && (
                       <div className="col-span-full py-24 flex flex-col items-center justify-center text-[var(--color-calendar-text-dim)] gap-4">
                         <div className="w-20 h-20 rounded-full bg-[var(--color-calendar-surface-hover)] flex items-center justify-center">
                           <Users size={40} className="opacity-20" />
@@ -1294,10 +1343,12 @@ export default function App() {
                   <textarea 
                     value={entries[activeEntryIdx]?.content || ''}
                     readOnly={selectedPerson?.id === 1}
+                    onPaste={handlePaste}
                     onChange={(e) => {
                       if (selectedPerson?.id === 1) return;
                       const val = e.target.value;
                       setEntries(prev => {
+                        if (!prev[activeEntryIdx]) return prev;
                         const updated = [...prev];
                         updated[activeEntryIdx] = { ...updated[activeEntryIdx], content: val };
                         return updated;
@@ -1313,9 +1364,9 @@ export default function App() {
 
                 {/* Multiple Image Upload */}
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-[var(--color-calendar-text-muted)] uppercase tracking-wider">截图/图片 ({entries[activeEntryIdx]?.images.length || 0})</label>
+                  <label className="text-xs font-medium text-[var(--color-calendar-text-muted)] uppercase tracking-wider">截图/图片 ({(entries[activeEntryIdx]?.images || []).length})</label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                        {entries[activeEntryIdx]?.images.map((img, imgIdx) => (
+                        {entries[activeEntryIdx]?.images?.map((img, imgIdx) => (
                           <div key={imgIdx} className="relative group aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] bg-[var(--color-calendar-page-bg)]">
                             <img 
                               src={img} 
