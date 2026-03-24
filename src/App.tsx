@@ -40,7 +40,6 @@ import {
   Upload,
   FileText
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from './lib/utils';
 import { Note, CalendarDay, NoteEntry, Person } from './types';
 
@@ -58,10 +57,7 @@ function YearMonthPicker({ currentDate, onSelect, onClose }: YearMonthPickerProp
   const currentMonth = getMonth(currentDate);
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
+    <div 
       className="absolute top-full left-0 mt-2 z-50 bg-[var(--color-calendar-surface)] border border-[var(--color-calendar-border)] rounded-xl shadow-2xl p-4 w-64"
     >
       <div className="flex items-center justify-between mb-4 px-2">
@@ -91,7 +87,7 @@ function YearMonthPicker({ currentDate, onSelect, onClose }: YearMonthPickerProp
           </button>
         ))}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -151,10 +147,7 @@ const CalendarDayCell = React.memo(({
   const isToday = isSameDay(day.date, new Date());
   
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
+    <div 
       onClick={() => onClick(day.date)}
       onContextMenu={(e) => onContextMenu(e, day.date)}
       className={cn(
@@ -197,7 +190,7 @@ const CalendarDayCell = React.memo(({
           <p className="text-[9px] text-[var(--color-calendar-accent)] font-bold">+{note.entries.length - 3} 更多...</p>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 });
 
@@ -227,7 +220,7 @@ const MonthSummaryModal = memo(({
       const dateStr = format(day, 'yyyy-MM-dd');
       const dayEntries: { person: Person, note: Note }[] = [];
       
-      people.slice(1).forEach(person => {
+      people.forEach(person => {
         const key = `${person.id}_${dateStr}`;
         const note = allNotes[key];
         if (note && note.entries) {
@@ -468,12 +461,7 @@ const MonthSummaryModal = memo(({
   
   return (
     <div id="month-summary-modal-container" className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.98, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.98, y: 10 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
-        style={{ willChange: "transform, opacity" }}
+      <div 
         className="w-full h-full max-w-[95vw] bg-[var(--color-calendar-sidebar-bg)] rounded-3xl border border border-[var(--color-calendar-border)] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Header */}
@@ -569,7 +557,7 @@ const MonthSummaryModal = memo(({
         {/* Footer */}
         <div className="p-6 bg-[var(--color-calendar-sidebar-bg)] border-t border-[var(--color-calendar-border)] flex justify-between items-center no-print">
            <div className="text-xs text-[var(--color-calendar-text-dim)]">
-             共计 {monthDays.length} 天 · {people.length - 1} 位人员
+             共计 {monthDays.length} 天 · {people.length} 位人员
            </div>
            <button 
             onClick={onClose}
@@ -578,7 +566,7 @@ const MonthSummaryModal = memo(({
             返回日历
           </button>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 });
@@ -999,8 +987,8 @@ export default function App() {
     
     const summary: { person: Person, note: Note }[] = [];
     
-    // Skip the first person (Summary View itself)
-    allPeople.slice(1).forEach(person => {
+    // Include all personnel
+    allPeople.forEach(person => {
       const personNoteKey = `${person.id}_${dateStr}`;
       const note = allNotes[personNoteKey];
       if (note && note.entries && note.entries.length > 0) {
@@ -1516,7 +1504,6 @@ export default function App() {
                   汇总
                 </span>
               )}
-              <AnimatePresence>
                 {isPickerOpen && (
                   <YearMonthPicker 
                     currentDate={currentDate} 
@@ -1524,8 +1511,7 @@ export default function App() {
                     onClose={() => setIsPickerOpen(false)} 
                   />
                 )}
-              </AnimatePresence>
-            </div>
+              </div>
           </div>
 
           <div className="flex items-center gap-4">
@@ -1587,19 +1573,15 @@ export default function App() {
       </div>
 
       {/* Note Modal */}
-      <AnimatePresence>
-        {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              onPaste={handlePaste}
-              className={cn(
-                "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
-                selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
-              )}
-            >
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div 
+            onPaste={handlePaste}
+            className={cn(
+              "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
+              selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
+            )}
+          >
               <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-calendar-border)]">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-[var(--color-calendar-accent)]/20 rounded-lg">
@@ -1814,10 +1796,9 @@ export default function App() {
                   </button>
                 </div>
               </div>
-            </motion.div>
+            </div>
           </div>
         )}
-      </AnimatePresence>
 
       {/* Context Menu */}
       {contextMenu && (
@@ -1831,15 +1812,11 @@ export default function App() {
       )}
 
       {/* Add Person Modal */}
-      <AnimatePresence>
-        {isAddPersonModalOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-[var(--color-calendar-surface)] w-full max-w-sm rounded-xl border border-[var(--color-calendar-border)] shadow-2xl p-6 space-y-4"
-            >
+      {isAddPersonModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div 
+            className="bg-[var(--color-calendar-surface)] w-full max-w-sm rounded-xl border border-[var(--color-calendar-border)] shadow-2xl p-6 space-y-4"
+          >
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold flex items-center gap-2">
                   <User size={20} className="text-[var(--color-calendar-accent)]" />
@@ -1878,21 +1855,16 @@ export default function App() {
                   {isSubmitting ? '添加中...' : '确定添加'}
                 </button>
               </div>
-            </motion.div>
+            </div>
           </div>
         )}
-      </AnimatePresence>
 
       {/* Search Modal */}
-      <AnimatePresence>
-        {isSearchModalOpen && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-            <motion.div 
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              className="bg-[var(--color-calendar-sidebar-bg)] w-full max-w-4xl h-[80vh] rounded-2xl border border-[var(--color-calendar-border)] shadow-2xl flex flex-col overflow-hidden"
-            >
+      {isSearchModalOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div 
+            className="bg-[var(--color-calendar-sidebar-bg)] w-full max-w-4xl h-[80vh] rounded-2xl border border-[var(--color-calendar-border)] shadow-2xl flex flex-col overflow-hidden"
+          >
               {/* Search Header */}
               <div className="p-6 border-b border-[var(--color-calendar-border)] space-y-4">
                 <div className="flex items-center gap-4 bg-[var(--color-calendar-surface-hover)] px-4 py-3 rounded-xl border border-[var(--color-calendar-border)] focus-within:border-[var(--color-calendar-accent)] transition-all">
@@ -1929,10 +1901,7 @@ export default function App() {
                     </div>
                   ) : searchResults.length > 0 ? (
                     searchResults.map((result, idx) => (
-                      <motion.div 
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.05 }}
+                      <div 
                         key={idx}
                         onClick={() => {
                           setCurrentDate(new Date(result.date));
@@ -1973,7 +1942,7 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                      </motion.div>
+                      </div>
                     ))
                   ) : searchQuery ? (
                     <div className="flex flex-col items-center justify-center h-full text-[var(--color-calendar-text-dim)] gap-2">
@@ -2034,28 +2003,24 @@ export default function App() {
                   关闭搜索
                 </button>
               </div>
-            </motion.div>
+            </div>
           </div>
         )}
 
         {/* Month Summary Modal */}
-        <AnimatePresence>
-          {isMonthSummaryOpen && (
-            <MonthSummaryModal 
-              currentDate={currentDate}
-              people={people}
-              allNotes={notes}
-              onClose={() => setIsMonthSummaryOpen(false)}
-            />
-          )}
-        </AnimatePresence>
+        {isMonthSummaryOpen && (
+          <MonthSummaryModal 
+            currentDate={currentDate}
+            people={people}
+            allNotes={getLocalNotes()}
+            onClose={() => setIsMonthSummaryOpen(false)}
+          />
+        )}
 
         {/* Settings Modal */}
         {isSettingsOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
+            <div 
               className="bg-[var(--color-calendar-surface)] w-full max-w-md rounded-2xl shadow-2xl border border-[var(--color-calendar-border)] overflow-hidden"
             >
               <div className="p-6 border-b border-[var(--color-calendar-border)] flex items-center justify-between">
@@ -2204,10 +2169,9 @@ export default function App() {
                   完成设置
                 </button>
               </div>
-            </motion.div>
+            </div>
           </div>
         )}
-      </AnimatePresence>
-    </div>
-  );
+      </div>
+    );
 }
