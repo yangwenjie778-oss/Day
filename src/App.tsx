@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, memo, useCallback } from 'react';
 import { 
   format, 
   addMonths, 
@@ -201,7 +201,7 @@ const CalendarDayCell = React.memo(({
   );
 });
 
-const MonthSummaryModal = ({ 
+const MonthSummaryModal = memo(({ 
   currentDate, 
   people, 
   allNotes,
@@ -214,15 +214,16 @@ const MonthSummaryModal = ({
 }) => {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
-  const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  
+  // Memoize month days calculation
+  const monthDays = useMemo(() => 
+    eachDayOfInterval({ start: monthStart, end: monthEnd }),
+    [monthStart, monthEnd]
+  );
 
-  const exportMonthToHtml = () => {
-    const fileName = `${format(currentDate, 'yyyy年M月')}_全员月度总结.html`;
-    
-    // Group notes by date and filter out entries that have neither text nor images
-    const groupedByDate: Record<string, { person: Person, note: Note }[]> = {};
-    
-    monthDays.forEach(day => {
+  // Memoize grouped data to avoid heavy calculations on every render
+  const groupedData = useMemo(() => {
+    return monthDays.map(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
       const dayEntries: { person: Person, note: Note }[] = [];
       
@@ -239,13 +240,15 @@ const MonthSummaryModal = ({
           }
         }
       });
-      
-      if (dayEntries.length > 0) {
-        groupedByDate[dateStr] = dayEntries;
-      }
-    });
 
-    const sortedDates = Object.keys(groupedByDate).sort((a, b) => a.localeCompare(b));
+      return { day, dateStr, dayEntries };
+    }).filter(item => item.dayEntries.length > 0);
+  }, [monthDays, people, allNotes]);
+
+  const exportMonthToHtml = useCallback(() => {
+    const fileName = `${format(currentDate, 'yyyy年M月')}_全员月度总结.html`;
+    
+    const sortedDates = groupedData.map(item => item.dateStr).sort((a, b) => a.localeCompare(b));
     
     let htmlContent = `
       <!DOCTYPE html>
@@ -411,9 +414,7 @@ const MonthSummaryModal = ({
           <div class="meta">导出时间: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</div>
         </div>
         
-        ${sortedDates.map(dateStr => {
-          const day = new Date(dateStr);
-          const entries = groupedByDate[dateStr];
+        ${groupedData.map(({ day, dateStr, dayEntries }) => {
           return `
             <div class="date-section">
               <div class="date-header">
@@ -421,7 +422,7 @@ const MonthSummaryModal = ({
                 <span style="font-size: 0.6em; opacity: 0.6;">${format(day, 'EEEE', { locale: zhCN })}</span>
               </div>
               <div class="notes-grid">
-                ${entries.map(({ person, note }) => `
+                ${dayEntries.map(({ person, note }) => `
                   <div class="note-card">
                     <div class="person-header">
                       <div class="avatar" style="background-color: ${person.avatar_color}">${person.name[0]}</div>
@@ -463,14 +464,16 @@ const MonthSummaryModal = ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  };
+  }, [currentDate, groupedData]);
   
   return (
     <div id="month-summary-modal-container" className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8 bg-black/60 backdrop-blur-sm">
       <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        initial={{ opacity: 0, scale: 0.98, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        exit={{ opacity: 0, scale: 0.98, y: 10 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        style={{ willChange: "transform, opacity" }}
         className="w-full h-full max-w-[95vw] bg-[var(--color-calendar-sidebar-bg)] rounded-3xl border border border-[var(--color-calendar-border)] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Header */}
@@ -503,85 +506,54 @@ const MonthSummaryModal = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
-          {monthDays.map(day => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const dayEntries: { person: Person, note: Note }[] = [];
-            
-            people.slice(1).forEach(person => {
-              const key = `${person.id}_${dateStr}`;
-              const note = allNotes[key];
-              if (note && note.entries) {
-                const validEntries = note.entries.filter(e => 
-                  (e.content && e.content.trim() !== '') || 
-                  (e.images && e.images.length > 0)
-                );
-                if (validEntries.length > 0) {
-                  dayEntries.push({ person, note: { ...note, entries: validEntries } });
-                }
-              }
-            });
-
-            if (dayEntries.length === 0) return null;
-
-            return (
-              <div key={dateStr} className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className="px-4 py-1.5 bg-[var(--color-calendar-accent)] text-white text-sm font-bold rounded-full shadow-lg shadow-[var(--color-calendar-accent)]/20">
-                    {format(day, 'M月d日')} {format(day, 'EEEE', { locale: zhCN })}
-                  </div>
-                  <div className="h-px flex-1 bg-gradient-to-r from-[var(--color-calendar-border)] to-transparent" />
+          {groupedData.map(({ day, dateStr, dayEntries }) => (
+            <div key={dateStr} className="space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="px-4 py-1.5 bg-[var(--color-calendar-accent)] text-white text-sm font-bold rounded-full shadow-lg shadow-[var(--color-calendar-accent)]/20">
+                  {format(day, 'M月d日')} {format(day, 'EEEE', { locale: zhCN })}
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
-                  {dayEntries.map(({ person, note }) => (
-                    <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-2xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all hover:border-[var(--color-calendar-accent)]/30 group">
-                      <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30 group-hover:bg-[var(--color-calendar-accent)]/5 transition-colors">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
-                          {person.name[0]}
-                        </div>
-                        <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
-                      </div>
-                      <div className="p-4 space-y-4 flex-1">
-                        {note.entries.map((entry, eIdx) => (
-                          <div key={eIdx} className="space-y-2 pb-3 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
-                            {entry.tag && (
-                              <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
-                                {entry.tag}
-                              </span>
-                            )}
-                            <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
-                              {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
-                            </p>
-                            {entry.images && entry.images.length > 0 && (
-                              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                                {entry.images.map((img, iIdx) => (
-                                  <div key={iIdx} className="flex-shrink-0 w-24 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
-                                    <img src={img} alt="record" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <div className="h-px flex-1 bg-gradient-to-r from-[var(--color-calendar-border)] to-transparent" />
               </div>
-            );
-          })}
 
-          {monthDays.every(day => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            return !people.slice(1).some(person => {
-              const key = `${person.id}_${dateStr}`;
-              const note = allNotes[key];
-              return note && note.entries && note.entries.some(e => 
-                (e.content && e.content.trim() !== '') || 
-                (e.images && e.images.length > 0)
-              );
-            });
-          }) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
+                {dayEntries.map(({ person, note }) => (
+                  <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-2xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all hover:border-[var(--color-calendar-accent)]/30 group">
+                    <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30 group-hover:bg-[var(--color-calendar-accent)]/5 transition-colors">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
+                        {person.name[0]}
+                      </div>
+                      <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
+                    </div>
+                    <div className="p-4 space-y-4 flex-1">
+                      {note.entries.map((entry, eIdx) => (
+                        <div key={eIdx} className="space-y-2 pb-3 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
+                          {entry.tag && (
+                            <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
+                              {entry.tag}
+                            </span>
+                          )}
+                          <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
+                            {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
+                          </p>
+                          {entry.images && entry.images.length > 0 && (
+                            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                              {entry.images.map((img, iIdx) => (
+                                <div key={iIdx} className="flex-shrink-0 w-24 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
+                                  <img src={img} alt="record" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {groupedData.length === 0 && (
             <div className="h-[60vh] flex flex-col items-center justify-center text-[var(--color-calendar-text-dim)] gap-6">
               <div className="w-32 h-32 rounded-full bg-[var(--color-calendar-surface-hover)] flex items-center justify-center">
                 <CalendarIcon size={64} className="opacity-10" />
@@ -609,7 +581,7 @@ const MonthSummaryModal = ({
       </motion.div>
     </div>
   );
-};
+});
 
 export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -1039,13 +1011,16 @@ export default function App() {
     return summary;
   };
 
-  // Fetch people on mount
+  // Fetch people and notes on mount
   useEffect(() => {
     const initialPeople = getLocalPeople();
     setPeople(initialPeople);
     if (initialPeople.length > 0) {
       setSelectedPerson(initialPeople[0]);
     }
+    
+    const initialNotes = getLocalNotes();
+    setNotes(initialNotes);
     
     const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
     if (savedTheme) setThemeColor(savedTheme);
@@ -2069,7 +2044,7 @@ export default function App() {
             <MonthSummaryModal 
               currentDate={currentDate}
               people={people}
-              allNotes={getLocalNotes()}
+              allNotes={notes}
               onClose={() => setIsMonthSummaryOpen(false)}
             />
           )}
