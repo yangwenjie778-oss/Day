@@ -13,7 +13,8 @@ import {
   setYear,
   setMonth,
   getYear,
-  getMonth
+  getMonth,
+  parseISO
 } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { dialog, fs } from '@tauri-apps/api';
@@ -198,12 +199,16 @@ const MonthSummaryModal = memo(({
   currentDate, 
   people, 
   allNotes,
-  onClose 
+  onClose,
+  onPreviewImage,
+  onEditDay
 }: { 
   currentDate: Date, 
   people: Person[], 
   allNotes: Record<string, Note>,
-  onClose: () => void 
+  onClose: () => void,
+  onPreviewImage: (src: string) => void,
+  onEditDay: (day: Date, person: Person) => void
 }) => {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -505,12 +510,18 @@ const MonthSummaryModal = memo(({
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-6">
                 {dayEntries.map(({ person, note }) => (
-                  <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-2xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all hover:border-[var(--color-calendar-accent)]/30 group">
-                    <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30 group-hover:bg-[var(--color-calendar-accent)]/5 transition-colors">
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
-                        {person.name[0]}
+                  <div 
+                    key={person.id} 
+                    onClick={() => onEditDay(day, person)}
+                    className="bg-[var(--color-calendar-surface)] rounded-2xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all hover:border-[var(--color-calendar-accent)]/30 group cursor-pointer"
+                  >
+                    <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center justify-between bg-[var(--color-calendar-surface-hover)]/30 group-hover:bg-[var(--color-calendar-accent)]/5 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
+                          {person.name[0]}
+                        </div>
+                        <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
                       </div>
-                      <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
                     </div>
                     <div className="p-4 space-y-4 flex-1">
                       {note.entries.map((entry, eIdx) => (
@@ -527,7 +538,16 @@ const MonthSummaryModal = memo(({
                             <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
                               {entry.images.map((img, iIdx) => (
                                 <div key={iIdx} className="flex-shrink-0 w-24 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
-                                  <img src={img} alt="record" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  <img 
+                                    src={img} 
+                                    alt="record" 
+                                    className="w-full h-full object-cover cursor-zoom-in hover:opacity-80 transition-opacity" 
+                                    referrerPolicy="no-referrer" 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onPreviewImage(img);
+                                    }}
+                                  />
                                 </div>
                               ))}
                             </div>
@@ -930,18 +950,44 @@ export default function App() {
   const [activeEntryIdx, setActiveEntryIdx] = useState(0);
   const [isEditingTagName, setIsEditingTagName] = useState(false);
   const [tempTagName, setTempTagName] = useState('');
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, personId: number } | null>(null);
 
   const pickerRef = useRef<HTMLDivElement>(null);
+  const editingContextRef = useRef<{ day: string; personId: number } | null>(null);
 
   // --- Local Storage Helpers ---
   const STORAGE_KEYS = {
     PEOPLE: 'calendar_people',
     NOTES: 'calendar_notes',
     THEME: 'calendar_theme',
-    THEME_MODE: 'calendar_theme_mode'
+    THEME_MODE: 'calendar_theme_mode',
+    SYSTEM_TAGS: 'calendar_system_tags'
+  };
+
+  const getSystemTags = (): string[] => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.SYSTEM_TAGS);
+      if (!stored) {
+        const defaultTags = ['负责内容', '不足', '优秀'];
+        localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(defaultTags));
+        return defaultTags;
+      }
+      return JSON.parse(stored);
+    } catch (e) {
+      return ['负责内容', '不足', '优秀'];
+    }
+  };
+
+  const [systemTags, setSystemTags] = useState<string[]>(getSystemTags());
+
+  const saveSystemTags = (tags: string[]) => {
+    localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tags));
+    setSystemTags(tags);
   };
 
   const getLocalPeople = (): Person[] => {
@@ -976,7 +1022,9 @@ export default function App() {
 
   const saveLocalNotes = (newNotes: Record<string, Note>) => {
     localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(newNotes));
-    setNotes(newNotes);
+    // Don't update the 'notes' state with the full map (which uses ID_date keys)
+    // as the calendar expects date keys. The relevant useEffects will handle
+    // updating the 'notes' state for the current view.
   };
 
   const getSummaryDataForDay = (day: Date) => {
@@ -1091,11 +1139,16 @@ export default function App() {
 
   // Auto-save notes when entries change
   useEffect(() => {
-    if (!isModalOpen || !selectedDay || !selectedPerson || selectedPerson.id === 1) return;
+    if (!selectedDay || !selectedPerson || selectedPerson.id === 1) return;
 
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
     const storageKey = `${selectedPerson.id}_${dateStr}`;
     
+    // Only save if the entries belong to the current day and person
+    if (editingContextRef.current?.day !== dateStr || editingContextRef.current?.personId !== selectedPerson.id) {
+      return;
+    }
+
     const allNotes = getLocalNotes();
     const newNote: Note = {
       id: Date.now(),
@@ -1107,11 +1160,12 @@ export default function App() {
     allNotes[storageKey] = newNote;
     saveLocalNotes(allNotes);
     
+    // Update local state for the calendar view
     setNotes(prev => ({
       ...prev,
       [dateStr]: newNote
     }));
-  }, [entries, isModalOpen, selectedDay, selectedPerson]);
+  }, [entries, selectedDay, selectedPerson]);
 
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentDate);
@@ -1136,15 +1190,42 @@ export default function App() {
   const handleNextMonth = () => setCurrentDate(addMonths(currentDate, 1));
   const handleToday = () => setCurrentDate(new Date());
 
-  const openNoteModal = (day: Date) => {
+  const openNoteModal = (day: Date, person?: Person) => {
+    const targetPerson = person || selectedPerson;
+    if (!targetPerson) return;
+
     const dateStr = format(day, 'yyyy-MM-dd');
-    const existingNote = notes[dateStr];
+    const allNotes = getLocalNotes();
+    const storageKey = `${targetPerson.id}_${dateStr}`;
+    const existingNote = allNotes[storageKey];
+    
     setSelectedDay(day);
+    // Update the ref so the auto-save effect knows these entries belong to this day/person
+    editingContextRef.current = { day: dateStr, personId: targetPerson.id };
+    
+    const currentSystemTags = getSystemTags();
     
     if (existingNote && existingNote.entries && existingNote.entries.length > 0) {
-      setEntries(existingNote.entries);
+      let updatedEntries = [...existingNote.entries];
+      
+      // Ensure at least 3 entries for system tags without using while loop
+      if (updatedEntries.length < 3) {
+        const padding = Array.from({ length: 3 - updatedEntries.length }, () => ({ tag: '', content: '', images: [] }));
+        updatedEntries = [...updatedEntries, ...padding];
+      }
+      
+      // Update first 3 tags to match current system tags
+      const finalEntries = updatedEntries.map((entry, i) => {
+        if (i < 3) {
+          return { ...entry, tag: currentSystemTags[i] };
+        }
+        return entry;
+      });
+      
+      setEntries(finalEntries);
     } else {
-      setEntries([{ tag: '', content: '', images: [] }]);
+      // Initialize with 3 default entries
+      setEntries(currentSystemTags.map(tag => ({ tag, content: '', images: [] })));
     }
     setActiveEntryIdx(0);
     setIsModalOpen(true);
@@ -1220,40 +1301,6 @@ export default function App() {
     });
   };
 
-  const saveNote = async () => {
-    if (!selectedDay || !selectedPerson || selectedPerson.id === 1 || isSubmitting) return;
-    
-    setIsSubmitting(true);
-    const dateStr = format(selectedDay, 'yyyy-MM-dd');
-    const storageKey = `${selectedPerson.id}_${dateStr}`;
-    
-    try {
-      const allNotes = getLocalNotes();
-      const newNote: Note = {
-        id: Date.now(),
-        person_id: selectedPerson.id,
-        date: dateStr,
-        entries: entries
-      };
-      
-      allNotes[storageKey] = newNote;
-      saveLocalNotes(allNotes);
-      
-      // Update local state
-      setNotes(prev => ({
-        ...prev,
-        [dateStr]: newNote
-      }));
-      
-      setIsModalOpen(false);
-    } catch (error) {
-      console.error('Failed to save note:', error);
-      alert('保存失败，请重试');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const deleteNote = async () => {
     if (!selectedDay || !selectedPerson || isSubmitting) return;
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
@@ -1299,6 +1346,12 @@ export default function App() {
   };
 
   const confirmRenameTag = () => {
+    if (activeEntryIdx < 3) {
+      const newSystemTags = [...systemTags];
+      newSystemTags[activeEntryIdx] = tempTagName;
+      saveSystemTags(newSystemTags);
+    }
+    
     setEntries(prev => {
       if (!prev[activeEntryIdx]) return prev;
       const updated = [...prev];
@@ -1574,7 +1627,7 @@ export default function App() {
 
       {/* Note Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div 
             onPaste={handlePaste}
             className={cn(
@@ -1674,7 +1727,13 @@ export default function App() {
                                 <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
                                   {entry.images.map((img, iIdx) => (
                                     <div key={iIdx} className="flex-shrink-0 w-28 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
-                                      <img src={img} alt="record" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                      <img 
+                                        src={img} 
+                                        alt="record" 
+                                        className="w-full h-full object-cover cursor-zoom-in" 
+                                        referrerPolicy="no-referrer" 
+                                        onClick={() => { setPreviewImage(img); setIsPreviewOpen(true); }}
+                                      />
                                     </div>
                                   ))}
                                 </div>
@@ -1714,8 +1773,8 @@ export default function App() {
 
                 {/* Text Editor */}
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-[var(--color-calendar-text-muted)] uppercase tracking-wider">
-                    [{entries[activeEntryIdx]?.tag}] 备注内容
+                  <label className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-wider">
+                    <span className="text-[var(--color-calendar-accent)]">[{entries[activeEntryIdx]?.tag}]</span> 备注内容
                   </label>
                   <textarea 
                     value={entries[activeEntryIdx]?.content || ''}
@@ -1748,8 +1807,9 @@ export default function App() {
                             <img 
                               src={img} 
                               alt={`upload-${imgIdx}`} 
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-cover cursor-zoom-in"
                               referrerPolicy="no-referrer"
+                              onClick={() => { setPreviewImage(img); setIsPreviewOpen(true); }}
                             />
                             {selectedPerson?.id !== 1 && (
                               <button 
@@ -1777,7 +1837,7 @@ export default function App() {
 
               <div className="flex items-center justify-between px-6 py-4 bg-[var(--color-calendar-surface)] border-t border-[var(--color-calendar-border)]">
                 <button 
-                  onClick={deleteNote}
+                  onClick={() => setIsConfirmDeleteOpen(true)}
                   disabled={isSubmitting || selectedPerson?.id === 1}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors text-sm",
@@ -2014,6 +2074,14 @@ export default function App() {
             people={people}
             allNotes={getLocalNotes()}
             onClose={() => setIsMonthSummaryOpen(false)}
+            onPreviewImage={(src) => {
+              setPreviewImage(src);
+              setIsPreviewOpen(true);
+            }}
+            onEditDay={(day, person) => {
+              setSelectedPerson(person);
+              openNoteModal(day, person);
+            }}
           />
         )}
 
@@ -2172,6 +2240,127 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {isPreviewOpen && previewImage && (
+          <ImagePreview src={previewImage} onClose={() => setIsPreviewOpen(false)} />
+        )}
+
+        <ConfirmationModal 
+          isOpen={isConfirmDeleteOpen}
+          title="确认清空记录？"
+          message="此操作将永久删除该人员在这一天的所有记录，无法撤销。"
+          onConfirm={() => {
+            deleteNote();
+            setIsConfirmDeleteOpen(false);
+          }}
+          onCancel={() => setIsConfirmDeleteOpen(false)}
+        />
       </div>
     );
+}
+
+function ImagePreview({ src, onClose }: { src: string; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const handleWheel = (e: React.WheelEvent) => {
+    // Remove e.preventDefault() to avoid potential main thread blocking
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setScale(prev => Math.max(0.1, Math.min(5, prev + delta)));
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    setPosition({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-md"
+      onClick={onClose}
+      onWheel={handleWheel}
+    >
+      <div 
+        className="relative max-w-[90vw] max-h-[90vh] cursor-grab active:cursor-grabbing"
+        onClick={e => e.stopPropagation()}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        style={{
+          transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+          transition: isDragging ? 'none' : 'transform 0.1s ease-out'
+        }}
+      >
+        <img 
+          src={src} 
+          alt="preview" 
+          className="w-full h-full object-contain pointer-events-none" 
+          referrerPolicy="no-referrer"
+        />
+      </div>
+      <button 
+        onClick={onClose}
+        className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+      >
+        <X size={24} />
+      </button>
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/50 rounded-full text-white text-sm font-medium backdrop-blur-sm">
+        {Math.round(scale * 100)}% | 滚轮缩放 | 拖拽移动
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationModal({ isOpen, title, message, onConfirm, onCancel }: { 
+  isOpen: boolean; 
+  title: string; 
+  message: string; 
+  onConfirm: () => void; 
+  onCancel: () => void;
+}) {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-[var(--color-calendar-surface)] w-full max-w-sm rounded-2xl shadow-2xl border border-[var(--color-calendar-border)] overflow-hidden">
+        <div className="p-6 space-y-4">
+          <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mx-auto">
+            <Trash2 size={24} />
+          </div>
+          <div className="text-center space-y-2">
+            <h3 className="text-lg font-bold text-[var(--color-calendar-text)]">{title}</h3>
+            <p className="text-sm text-[var(--color-calendar-text-dim)]">{message}</p>
+          </div>
+        </div>
+        <div className="flex border-t border-[var(--color-calendar-border)]">
+          <button 
+            onClick={onCancel}
+            className="flex-1 px-4 py-3 text-sm font-medium text-[var(--color-calendar-text-dim)] hover:bg-[var(--color-calendar-surface-hover)] transition-colors"
+          >
+            取消
+          </button>
+          <button 
+            onClick={onConfirm}
+            className="flex-1 px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-colors border-l border-[var(--color-calendar-border)]"
+          >
+            确认清空
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
