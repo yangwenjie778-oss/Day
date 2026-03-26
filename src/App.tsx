@@ -17,7 +17,8 @@ import {
   parseISO
 } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { dialog, fs } from '@tauri-apps/api';
+import { dialog, fs, path } from '@tauri-apps/api';
+import { appWindow } from '@tauri-apps/api/window';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -592,6 +593,16 @@ const MonthSummaryModal = memo(({
 });
 
 export default function App() {
+  const STORAGE_KEYS = {
+    PEOPLE: 'calendar_people',
+    NOTES: 'calendar_notes',
+    THEME: 'calendar_theme',
+    THEME_MODE: 'calendar_theme_mode',
+    SYSTEM_TAGS: 'calendar_system_tags',
+    BACKUP_PATH: 'calendar_backup_path',
+    MAX_BACKUPS: 'calendar_max_backups',
+  };
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [notes, setNotes] = useState<Record<string, Note>>({});
   const [people, setPeople] = useState<Person[]>([]);
@@ -609,22 +620,134 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [themeColor, setThemeColor] = useState('#3b82f6');
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
+  const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
+  const [maxBackups, setMaxBackups] = useState<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
+  const [importData, setImportData] = useState<{ people: Person[], notes: Record<string, Note>, theme?: string, themeMode?: string } | null>(null);
+  const [personToDelete, setPersonToDelete] = useState<number | null>(null);
   const [isMonthSummaryOpen, setIsMonthSummaryOpen] = useState(false);
 
   // Check if running in Tauri
   const isTauri = !!(window as any).__TAURI__;
 
   // --- Export/Import Logic ---
-  const exportToJson = async () => {
-    const data = {
-      people: getLocalPeople(),
-      notes: getLocalNotes(),
+  const generateBackupData = async () => {
+    const peopleData = getLocalPeople();
+    const notesData = getLocalNotes();
+    
+    // JSON
+    const jsonData = {
+      people: peopleData,
+      notes: notesData,
       theme: themeColor,
       themeMode: themeMode,
       exportDate: new Date().toISOString()
     };
-    const jsonStr = JSON.stringify(data, null, 2);
+    const jsonStr = JSON.stringify(jsonData, null, 2);
+    
+    // HTML
+    const groupedByDate: Record<string, Note[]> = {};
+    Object.entries(notesData).forEach(([key, note]) => {
+      const date = key.includes('_') ? key.split('_')[1] : key;
+      const validEntries = note.entries.filter(entry => 
+        (entry.content && entry.content.trim() !== '') || 
+        (entry.images && entry.images.length > 0)
+      );
+      if (validEntries.length > 0) {
+        if (!groupedByDate[date]) groupedByDate[date] = [];
+        groupedByDate[date].push({ ...note, entries: validEntries });
+      }
+    });
+
+    const sortedDates = Object.keys(groupedByDate).sort((a, b) => a.localeCompare(b));
+    let htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>日历记录导出报告</title>
+        <style>
+          :root { --primary: #2563eb; --bg: #f8fafc; --card-bg: #ffffff; --text: #1e293b; --text-muted: #64748b; --border: #e2e8f0; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: var(--text); max-width: 1000px; margin: 0 auto; padding: 40px 20px; background: var(--bg); }
+          .header { text-align: center; margin-bottom: 40px; background: var(--card-bg); padding: 40px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.03); border: 1px solid var(--border); }
+          h1 { margin: 0; color: var(--primary); font-size: 2.5em; font-weight: 800; }
+          .meta { color: var(--text-muted); margin-top: 12px; font-size: 0.95em; }
+          .date-section { margin-bottom: 40px; }
+          .date-header { font-size: 1.8em; font-weight: 800; color: var(--primary); margin-bottom: 20px; display: flex; align-items: center; gap: 15px; padding-bottom: 10px; border-bottom: 3px solid var(--primary); }
+          .notes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(450px, 1fr)); gap: 20px; }
+          @media (max-width: 600px) { .notes-grid { grid-template-columns: 1fr; } }
+          .note-card { background: var(--card-bg); border-radius: 12px; padding: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); border: 1px solid var(--border); display: flex; flex-direction: column; }
+          .person-info { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed var(--border); }
+          .person-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.8em; }
+          .person-name { font-weight: 700; color: var(--text); font-size: 1.1em; }
+          .entry { margin-bottom: 20px; padding: 12px; background: #f1f5f9; border-radius: 8px; }
+          .entry:last-child { margin-bottom: 0; }
+          .tag { display: inline-block; background: var(--primary); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.7em; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; }
+          .content { white-space: pre-wrap; font-size: 1em; color: var(--text); }
+          .images { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+          .img-container { width: 120px; height: 80px; overflow: hidden; border-radius: 6px; border: 1px solid var(--border); }
+          .img-container img { width: 100%; height: 100%; object-fit: cover; }
+          @media print { body { background: white; padding: 0; } .header, .note-card { box-shadow: none; border: 1px solid #eee; } .date-section { page-break-inside: avoid; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>日历记录报告</h1>
+          <div class="meta">导出时间: ${format(new Date(), 'yyyy年MM月dd日 HH:mm:ss')}</div>
+          <div class="meta">共计 ${sortedDates.length} 天有内容记录</div>
+        </div>
+    `;
+
+    sortedDates.forEach(date => {
+      const notes = groupedByDate[date];
+      htmlContent += `
+        <div class="date-section">
+          <div class="date-header">
+            <span>📅 ${date}</span>
+            <span style="font-size: 0.5em; background: #e2e8f0; padding: 4px 12px; border-radius: 20px; color: #475569;">
+              ${notes.length} 人记录
+            </span>
+          </div>
+          <div class="notes-grid">
+      `;
+      
+      notes.forEach(note => {
+        const person = peopleData.find(p => p.id === note.person_id);
+        htmlContent += `
+          <div class="note-card">
+            <div class="person-info">
+              <div class="person-avatar">${person?.name.charAt(0) || '?'}</div>
+              <div class="person-name">${person?.name || '未知人员'}</div>
+            </div>
+            ${note.entries.map(entry => `
+              <div class="entry">
+                <div class="tag">${entry.tag}</div>
+                <div class="content">${entry.content}</div>
+                ${entry.images && entry.images.length > 0 ? `
+                  <div class="images">
+                    ${entry.images.map(img => `
+                      <div class="img-container">
+                        <img src="${img}" alt="image">
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      });
+      
+      htmlContent += `</div></div>`;
+    });
+
+    htmlContent += `</body></html>`;
+    return { jsonStr, htmlContent };
+  };
+
+  const exportToJson = async () => {
+    const { jsonStr } = await generateBackupData();
     const fileName = `calendar_backup_${format(new Date(), 'yyyyMMdd_HHmm')}.json`;
 
     if (isTauri) {
@@ -654,241 +777,7 @@ export default function App() {
   };
 
   const exportToHtml = async () => {
-    const peopleData = getLocalPeople();
-    const notesData = getLocalNotes();
-    
-    // Group notes by date and filter out entries that have neither text nor images
-    const groupedByDate: Record<string, Note[]> = {};
-    Object.entries(notesData).forEach(([key, note]) => {
-      const date = key.includes('_') ? key.split('_')[1] : key;
-      
-      // Filter entries to include those with text OR images
-      const validEntries = note.entries.filter(entry => 
-        (entry.content && entry.content.trim() !== '') || 
-        (entry.images && entry.images.length > 0)
-      );
-      
-      if (validEntries.length > 0) {
-        if (!groupedByDate[date]) {
-          groupedByDate[date] = [];
-        }
-        groupedByDate[date].push({
-          ...note,
-          entries: validEntries
-        });
-      }
-    });
-
-    // Sort dates (chronological)
-    const sortedDates = Object.keys(groupedByDate).sort((a, b) => a.localeCompare(b));
-    
-    let htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>日历记录导出报告</title>
-        <style>
-          :root {
-            --primary: #2563eb;
-            --bg: #f8fafc;
-            --card-bg: #ffffff;
-            --text: #1e293b;
-            --text-muted: #64748b;
-            --border: #e2e8f0;
-          }
-          body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            line-height: 1.6; 
-            color: var(--text); 
-            max-width: 1000px; 
-            margin: 0 auto; 
-            padding: 40px 20px; 
-            background: var(--bg); 
-          }
-          .header { 
-            text-align: center; 
-            margin-bottom: 40px; 
-            background: var(--card-bg); 
-            padding: 40px; 
-            border-radius: 16px; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.03); 
-            border: 1px solid var(--border);
-          }
-          h1 { margin: 0; color: var(--primary); font-size: 2.5em; font-weight: 800; }
-          .meta { color: var(--text-muted); margin-top: 12px; font-size: 0.95em; }
-          
-          .date-section { 
-            margin-bottom: 40px; 
-          }
-          .date-header {
-            font-size: 1.8em;
-            font-weight: 800;
-            color: var(--primary);
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            padding-bottom: 10px;
-            border-bottom: 3px solid var(--primary);
-          }
-          
-          .notes-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
-            gap: 20px;
-          }
-          @media (max-width: 600px) {
-            .notes-grid { grid-template-columns: 1fr; }
-          }
-
-          .note-card { 
-            background: var(--card-bg); 
-            border-radius: 12px; 
-            padding: 24px; 
-            box-shadow: 0 2px 12px rgba(0,0,0,0.04); 
-            border: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-          }
-          .person-info { 
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px dashed var(--border);
-          }
-          .person-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--primary);
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 0.8em;
-          }
-          .person-name { 
-            font-weight: 700; 
-            color: var(--text); 
-            font-size: 1.1em;
-          }
-          
-          .entry { 
-            margin-bottom: 20px; 
-            padding: 12px;
-            background: #f1f5f9;
-            border-radius: 8px;
-          }
-          .entry:last-child { margin-bottom: 0; }
-          
-          .tag { 
-            display: inline-block; 
-            background: var(--primary); 
-            color: white; 
-            padding: 2px 8px; 
-            border-radius: 4px; 
-            font-size: 0.7em; 
-            font-weight: 700; 
-            margin-bottom: 8px; 
-            text-transform: uppercase; 
-          }
-          .content { 
-            white-space: pre-wrap; 
-            font-size: 1em; 
-            color: var(--text); 
-          }
-          .images { 
-            display: flex; 
-            gap: 10px; 
-            margin-top: 12px; 
-            flex-wrap: wrap; 
-          }
-          .img-container { 
-            width: 120px; 
-            height: 80px; 
-            overflow: hidden; 
-            border-radius: 6px; 
-            border: 1px solid var(--border); 
-          }
-          .img-container img { width: 100%; height: 100%; object-fit: cover; }
-          
-          @media print {
-            body { background: white; padding: 0; }
-            .header, .note-card { box-shadow: none; border: 1px solid #eee; }
-            .date-section { page-break-inside: avoid; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>日历记录报告</h1>
-          <div class="meta">导出时间: ${format(new Date(), 'yyyy年MM月dd日 HH:mm:ss')}</div>
-          <div class="meta">共计 ${sortedDates.length} 天有内容记录</div>
-        </div>
-    `;
-
-    sortedDates.forEach(date => {
-      const notes = groupedByDate[date];
-      
-      htmlContent += `
-        <div class="date-section">
-          <div class="date-header">
-            <span>📅 ${date}</span>
-            <span style="font-size: 0.5em; background: #e2e8f0; padding: 4px 12px; border-radius: 20px; color: #475569;">
-              ${notes.length} 人记录
-            </span>
-          </div>
-          <div class="notes-grid">
-      `;
-
-      notes.forEach(note => {
-        const person = peopleData.find(p => p.id === note.person_id);
-        const personName = person ? person.name : '未知';
-        const initial = personName.charAt(0);
-
-        htmlContent += `
-          <div class="note-card">
-            <div class="person-info">
-              <div class="person-avatar">${initial}</div>
-              <div class="person-name">${personName}</div>
-            </div>
-            ${note.entries.map(entry => `
-              <div class="entry">
-                ${entry.tag ? `<div class="tag">${entry.tag}</div>` : ''}
-                ${entry.content && entry.content.trim() !== '' ? `<div class="content">${entry.content}</div>` : ''}
-                ${entry.images && entry.images.length > 0 ? `
-                  <div class="images">
-                    ${entry.images.map(img => `
-                      <div class="img-container">
-                        <img src="${img}" alt="图片">
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
-          </div>
-        `;
-      });
-
-      htmlContent += `
-          </div>
-        </div>
-      `;
-    });
-
-    htmlContent += `
-        <div style="text-align: center; margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.85em;">
-          由智能日历应用自动生成 • ${new Date().getFullYear()}
-        </div>
-      </body>
-      </html>
-    `;
-
+    const { htmlContent } = await generateBackupData();
     const fileName = `日历记录报告_${format(new Date(), 'yyyyMMdd')}.html`;
 
     if (isTauri) {
@@ -917,6 +806,63 @@ export default function App() {
     }
   };
 
+  const runAutoBackup = async () => {
+    if (!isTauri || !backupPath) return;
+
+    try {
+      const { jsonStr, htmlContent } = await generateBackupData();
+      const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
+      
+      const jsonFileName = `auto_backup_${timestamp}.json`;
+      const htmlFileName = `auto_backup_${timestamp}.html`;
+      
+      const jsonFilePath = await path.join(backupPath, jsonFileName);
+      const htmlFilePath = await path.join(backupPath, htmlFileName);
+      
+      await fs.writeTextFile(jsonFilePath, jsonStr);
+      await fs.writeTextFile(htmlFilePath, htmlContent);
+      
+      const entries = await fs.readDir(backupPath);
+      const backupFiles = entries
+        .filter(e => e.name?.startsWith('auto_backup_'))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      
+      if (backupFiles.length > maxBackups * 2) {
+        const filesToDelete = backupFiles.slice(0, backupFiles.length - maxBackups * 2);
+        for (const file of filesToDelete) {
+          if (file.path) {
+            await fs.removeFile(file.path);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Auto backup error:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!isTauri) return;
+
+    const setupCloseListener = async () => {
+      const unlisten = await appWindow.onCloseRequested(async (event) => {
+        if (backupPath) {
+          event.preventDefault();
+          await runAutoBackup();
+          await appWindow.close();
+        }
+      });
+      return unlisten;
+    };
+
+    const unlistenPromise = setupCloseListener();
+
+    return () => {
+      unlistenPromise.then(unlisten => {
+        if (typeof unlisten === 'function') unlisten();
+      });
+    };
+  }, [backupPath, maxBackups]);
+
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -926,13 +872,8 @@ export default function App() {
       try {
         const data = JSON.parse(e.target?.result as string);
         if (data.people && data.notes) {
-          if (window.confirm('导入数据将覆盖当前所有数据，是否继续？')) {
-            localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(data.people));
-            localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(data.notes));
-            if (data.theme) localStorage.setItem(STORAGE_KEYS.THEME, data.theme);
-            if (data.themeMode) localStorage.setItem(STORAGE_KEYS.THEME_MODE, data.themeMode);
-            window.location.reload();
-          }
+          setImportData(data);
+          setIsImportConfirmOpen(true);
         } else {
           alert('无效的数据格式，请确保上传的是导出的 JSON 备份文件。');
         }
@@ -943,6 +884,62 @@ export default function App() {
     reader.readAsText(file);
     // Reset input
     event.target.value = '';
+  };
+
+  const confirmImport = (mode: 'overwrite' | 'merge') => {
+    if (!importData) return;
+
+    if (mode === 'overwrite') {
+      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(importData.people));
+      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(importData.notes));
+      if (importData.theme) localStorage.setItem(STORAGE_KEYS.THEME, importData.theme);
+      if (importData.themeMode) localStorage.setItem(STORAGE_KEYS.THEME_MODE, importData.themeMode);
+    } else {
+      // Merge logic
+      const currentPeople = getLocalPeople();
+      const currentNotes = getLocalNotes();
+      
+      // Merge people (avoid duplicates by name)
+      const mergedPeople = [...currentPeople];
+      const personIdMap: Record<number, number> = {}; // Map old ID to new ID if needed
+
+      importData.people.forEach(newP => {
+        if (newP.id === 1) return; // Skip summary
+        const existing = mergedPeople.find(p => p.name === newP.name);
+        if (!existing) {
+          const newId = Date.now() + Math.floor(Math.random() * 1000);
+          personIdMap[newP.id] = newId;
+          mergedPeople.push({ ...newP, id: newId });
+        } else {
+          personIdMap[newP.id] = existing.id;
+        }
+      });
+
+      // Merge notes
+      const mergedNotes: Record<string, Note> = { ...currentNotes };
+      Object.entries(importData.notes).forEach(([key, noteData]) => {
+        const note = noteData as Note;
+        const [oldPersonId, dateStr] = key.split('_');
+        const newPersonId = personIdMap[parseInt(oldPersonId)];
+        if (newPersonId) {
+          const newKey = `${newPersonId}_${dateStr}`;
+          if (mergedNotes[newKey]) {
+            // Merge entries if both exist
+            mergedNotes[newKey].entries = [
+              ...mergedNotes[newKey].entries,
+              ...note.entries
+            ];
+          } else {
+            mergedNotes[newKey] = { ...note, person_id: newPersonId };
+          }
+        }
+      });
+
+      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(mergedPeople));
+      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(mergedNotes));
+    }
+
+    window.location.reload();
   };
 
   // Modal Editing State
@@ -959,15 +956,6 @@ export default function App() {
 
   const pickerRef = useRef<HTMLDivElement>(null);
   const editingContextRef = useRef<{ day: string; personId: number } | null>(null);
-
-  // --- Local Storage Helpers ---
-  const STORAGE_KEYS = {
-    PEOPLE: 'calendar_people',
-    NOTES: 'calendar_notes',
-    THEME: 'calendar_theme',
-    THEME_MODE: 'calendar_theme_mode',
-    SYSTEM_TAGS: 'calendar_system_tags'
-  };
 
   const getSystemTags = (): string[] => {
     try {
@@ -1385,8 +1373,14 @@ export default function App() {
     }
   };
 
-  const handleDeletePerson = async (id: number) => {
-    if (id === 1) return; // Don't delete summary
+  const handleDeletePerson = (id: number) => {
+    if (id === 1) return;
+    setPersonToDelete(id);
+  };
+
+  const performDeletePerson = async () => {
+    if (personToDelete === null) return;
+    const id = personToDelete;
     try {
       const currentPeople = getLocalPeople();
       const updatedPeople = currentPeople.filter(p => p.id !== id);
@@ -1405,6 +1399,7 @@ export default function App() {
       if (selectedPerson?.id === id) {
         setSelectedPerson(updatedPeople[0]);
       }
+      setPersonToDelete(null);
     } catch (error) {
       console.error('Failed to delete person:', error);
     }
@@ -2089,7 +2084,7 @@ export default function App() {
         {isSettingsOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <div 
-              className="bg-[var(--color-calendar-surface)] w-full max-w-md rounded-2xl shadow-2xl border border-[var(--color-calendar-border)] overflow-hidden"
+              className="bg-[var(--color-calendar-surface)] w-full max-w-3xl rounded-2xl shadow-2xl border border-[var(--color-calendar-border)] overflow-hidden"
             >
               <div className="p-6 border-b border-[var(--color-calendar-border)] flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -2098,7 +2093,7 @@ export default function App() {
                   </div>
                   <div>
                     <h2 className="text-xl font-bold text-[var(--color-calendar-text)]">系统设置</h2>
-                    <p className="text-xs text-[var(--color-calendar-text-dim)]">自定义您的日历外观</p>
+                    <p className="text-xs text-[var(--color-calendar-text-dim)]">自定义您的日历外观与数据管理</p>
                   </div>
                 </div>
                 <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-[var(--color-calendar-surface-hover)] rounded-full transition-colors">
@@ -2106,7 +2101,9 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-6 space-y-8">
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Left Column: Appearance */}
+                <div className="space-y-8">
                 <div className="space-y-4">
                   <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">显示模式</label>
                   <div className="grid grid-cols-2 gap-4">
@@ -2181,61 +2178,102 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">数据管理</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={exportToJson}
-                      className="flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
-                    >
-                      <Download size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
-                      导出备份 (JSON)
-                    </button>
-                    <div className="relative">
-                      <input 
-                        type="file" 
-                        accept=".json"
-                        onChange={handleImport}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
+                </div>
+
+                {/* Right Column: Data Management */}
+                <div className="space-y-8">
+                  <div className="space-y-4">
+                    <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">数据管理</label>
+                    <div className="space-y-3">
                       <button
+                        onClick={exportToJson}
                         className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
                       >
-                        <Upload size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
-                        导入备份
+                        <Download size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
+                        导出备份 (JSON)
+                      </button>
+                      <div className="relative">
+                        <input 
+                          type="file" 
+                          accept=".json"
+                          onChange={handleImport}
+                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                        />
+                        <button
+                          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
+                        >
+                          <Upload size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
+                          导入备份 (JSON)
+                        </button>
+                      </div>
+                      <button
+                        onClick={exportToHtml}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
+                      >
+                        <FileText size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
+                        导出报告 (HTML)
                       </button>
                     </div>
-                    <button
-                      onClick={exportToHtml}
-                      className="col-span-2 flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] rounded-xl border border-[var(--color-calendar-border)] transition-all text-sm font-medium group"
-                    >
-                      <FileText size={18} className="text-[var(--color-calendar-text-dim)] group-hover:text-[var(--color-calendar-accent)]" />
-                      导出文档报告 (HTML/Word)
-                    </button>
                   </div>
-                  <p className="text-[10px] text-[var(--color-calendar-text-dim)] px-1">
-                    * HTML 报告可直接在浏览器查看，或使用 Word 打开进行编辑。
-                  </p>
-                </div>
 
-                <div className="p-4 bg-[var(--color-calendar-surface-hover)] rounded-xl border border-[var(--color-calendar-border)] space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-calendar-text-muted)]">
-                    <CheckCircle2 size={14} className="text-green-500" />
-                    <span>自动保存</span>
+                  <div className="p-4 bg-yellow-500/5 rounded-xl border border-yellow-500/20">
+                    <p className="text-xs text-yellow-500/80 leading-relaxed">
+                      提示：定期导出备份可以防止数据丢失。导入备份时，您可以选择覆盖当前数据或将新数据合并到现有数据中。
+                    </p>
                   </div>
-                  <p className="text-xs text-[var(--color-calendar-text-dim)] leading-relaxed">
-                    您的设置将自动保存到本地浏览器，下次打开时将保持您的个性化配置。
-                  </p>
-                </div>
-              </div>
 
-              <div className="p-4 bg-[var(--color-calendar-sidebar-bg)] border-t border-[var(--color-calendar-border)] flex justify-end">
-                <button 
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="px-8 py-2.5 bg-[var(--color-calendar-accent)] hover:opacity-90 rounded-xl text-sm font-bold text-white transition-all shadow-lg"
-                >
-                  完成设置
-                </button>
+                  {isTauri && (
+                    <div className="space-y-4 pt-4 border-t border-[var(--color-calendar-border)]">
+                      <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">自动备份 (仅限桌面端)</label>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-xs text-[var(--color-calendar-text-dim)]">备份路径</label>
+                          <div className="flex gap-2">
+                            <input 
+                              readOnly
+                              value={backupPath || '未设置'}
+                              className="flex-1 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-3 py-2 text-xs text-[var(--color-calendar-text-muted)] focus:outline-none"
+                            />
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  const selected = await dialog.open({ directory: true });
+                                  if (selected && typeof selected === 'string') {
+                                    setBackupPath(selected);
+                                    localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, selected);
+                                  }
+                                } catch (err) {
+                                  console.error('Pick directory error:', err);
+                                }
+                              }}
+                              className="px-3 py-2 bg-[var(--color-calendar-surface-hover)] border border-[var(--color-calendar-border)] rounded-lg text-xs hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] transition-colors"
+                            >
+                              选择
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs text-[var(--color-calendar-text-dim)]">最大备份数量</label>
+                          <input 
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={maxBackups}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value) || 1;
+                              setMaxBackups(val);
+                              localStorage.setItem(STORAGE_KEYS.MAX_BACKUPS, val.toString());
+                            }}
+                            className="w-full bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[var(--color-calendar-accent)]"
+                          />
+                        </div>
+                        <p className="text-[10px] text-[var(--color-calendar-text-dim)] leading-relaxed">
+                          开启后，软件关闭时将自动在指定路径生成 JSON 和 HTML 备份，并自动清理旧备份。
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -2244,6 +2282,24 @@ export default function App() {
         {isPreviewOpen && previewImage && (
           <ImagePreview src={previewImage} onClose={() => setIsPreviewOpen(false)} />
         )}
+
+        {/* Confirmation Modals */}
+        <ImportConfirmModal 
+          isOpen={isImportConfirmOpen}
+          onConfirm={confirmImport}
+          onCancel={() => {
+            setIsImportConfirmOpen(false);
+            setImportData(null);
+          }}
+        />
+
+        <ConfirmationModal 
+          isOpen={personToDelete !== null}
+          title="删除人员"
+          message="确定要删除此人员吗？该操作将同时删除其所有日历记录，且无法撤销。"
+          onConfirm={performDeletePerson}
+          onCancel={() => setPersonToDelete(null)}
+        />
 
         <ConfirmationModal 
           isOpen={isConfirmDeleteOpen}
@@ -2321,6 +2377,53 @@ function ImagePreview({ src, onClose }: { src: string; onClose: () => void }) {
       </button>
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/50 rounded-full text-white text-sm font-medium backdrop-blur-sm">
         {Math.round(scale * 100)}% | 滚轮缩放 | 拖拽移动
+      </div>
+    </div>
+  );
+}
+
+function ImportConfirmModal({ isOpen, onConfirm, onCancel }: { 
+  isOpen: boolean; 
+  onConfirm: (mode: 'overwrite' | 'merge') => void; 
+  onCancel: () => void;
+}) {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-[var(--color-calendar-surface)] w-full max-w-md rounded-2xl shadow-2xl border border-[var(--color-calendar-border)] overflow-hidden">
+        <div className="p-6 space-y-4">
+          <div className="w-12 h-12 rounded-full bg-[var(--color-calendar-accent)]/10 flex items-center justify-center text-[var(--color-calendar-accent)] mx-auto">
+            <Upload size={24} />
+          </div>
+          <div className="text-center space-y-2">
+            <h3 className="text-lg font-bold text-[var(--color-calendar-text)]">导入数据</h3>
+            <p className="text-sm text-[var(--color-calendar-text-dim)]">请选择导入方式：</p>
+          </div>
+          <div className="space-y-3 pt-2">
+            <button 
+              onClick={() => onConfirm('merge')}
+              className="w-full p-4 rounded-xl border border-[var(--color-calendar-border)] hover:border-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/5 transition-all text-left group"
+            >
+              <div className="font-bold text-[var(--color-calendar-text)] group-hover:text-[var(--color-calendar-accent)]">保留并合并</div>
+              <div className="text-xs text-[var(--color-calendar-text-dim)] mt-1">保留当前数据，仅加入备份中的新人员和记录。</div>
+            </button>
+            <button 
+              onClick={() => onConfirm('overwrite')}
+              className="w-full p-4 rounded-xl border border-[var(--color-calendar-border)] hover:border-red-500/50 hover:bg-red-500/5 transition-all text-left group"
+            >
+              <div className="font-bold text-[var(--color-calendar-text)] group-hover:text-red-500">完全覆盖</div>
+              <div className="text-xs text-[var(--color-calendar-text-dim)] mt-1">清空当前所有数据，完全替换为备份文件中的内容。</div>
+            </button>
+          </div>
+        </div>
+        <div className="p-4 bg-[var(--color-calendar-surface-hover)]/50 border-t border-[var(--color-calendar-border)] flex justify-end">
+          <button 
+            onClick={onCancel}
+            className="px-6 py-2 rounded-xl text-sm font-medium text-[var(--color-calendar-text-dim)] hover:text-white transition-colors"
+          >
+            取消
+          </button>
+        </div>
       </div>
     </div>
   );
