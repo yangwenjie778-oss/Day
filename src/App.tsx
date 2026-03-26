@@ -194,14 +194,6 @@ const CalendarDayCell = React.memo(({
       </div>
     </div>
   );
-}, (prev, next) => {
-  // 只有当日期、选中状态或笔记内容发生变化时才重绘
-  return (
-    prev.isSelected === next.isSelected &&
-    prev.day.date.getTime() === next.day.date.getTime() &&
-    prev.day.isCurrentMonth === next.day.isCurrentMonth &&
-    JSON.stringify(prev.note) === JSON.stringify(next.note)
-  );
 });
 
 const MonthSummaryModal = memo(({ 
@@ -615,19 +607,6 @@ export default function App() {
   const [fullNotes, setFullNotes] = useState<Record<string, Note>>({});
   const [people, setPeople] = useState<Person[]>([]);
   const [notes, setNotes] = useState<Record<string, Note>>({}); // Filtered notes for current person
-  
-  const fullNotesRef = useRef<Record<string, Note>>({});
-  const peopleRef = useRef<Person[]>([]);
-  const backupPathRef = useRef<string>('');
-  const maxBackupsRef = useRef<number>(10);
-
-  useEffect(() => {
-    fullNotesRef.current = fullNotes;
-  }, [fullNotes]);
-
-  useEffect(() => {
-    peopleRef.current = people;
-  }, [people]);
 
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -646,6 +625,25 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
   const [maxBackups, setMaxBackups] = useState<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
+
+  const fullNotesRef = useRef<Record<string, Note>>({});
+  const peopleRef = useRef<Person[]>([]);
+  const selectedPersonRef = useRef<Person | null>(null);
+  const systemTagsRef = useRef<string[]>([]);
+  const backupPathRef = useRef<string>('');
+  const maxBackupsRef = useRef<number>(10);
+
+  useEffect(() => {
+    fullNotesRef.current = fullNotes;
+  }, [fullNotes]);
+
+  useEffect(() => {
+    peopleRef.current = people;
+  }, [people]);
+
+  useEffect(() => {
+    selectedPersonRef.current = selectedPerson;
+  }, [selectedPerson]);
 
   useEffect(() => {
     backupPathRef.current = backupPath;
@@ -842,13 +840,15 @@ export default function App() {
   const runAutoBackup = async () => {
     const bPath = backupPathRef.current;
     // 强制转换为数字，并设置合理的默认值
-    const mBackups = Math.max(1, parseInt(String(maxBackupsRef.current || '5'), 10));
+    const mBackups = Math.max(1, parseInt(String(maxBackupsRef.current || localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'), 10));
     if (!isTauri || !bPath) return;
 
     try {
       const { jsonStr, htmlContent } = await generateBackupData();
       const now = new Date();
-      const timestamp = format(now, 'yyyyMMdd_HHmmss');
+      // 增加随机数后缀，彻底防止同秒冲突
+      const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const timestamp = `${format(now, 'yyyyMMdd_HHmmss')}_${randomSuffix}`;
       
       const jsonFileName = `auto_backup_${timestamp}.json`;
       const htmlFileName = `auto_backup_${timestamp}.html`;
@@ -859,29 +859,27 @@ export default function App() {
       await fs.writeTextFile(jsonFilePath, jsonStr);
       await fs.writeTextFile(htmlFilePath, htmlContent);
       
-      // 延迟清理，确保写入已完成
-      setTimeout(async () => {
-        try {
-          const entries = await fs.readDir(bPath);
-          // 过滤出备份文件并按名称（时间戳）排序
-          const backupFiles = entries
-            .filter(e => e.name?.startsWith('auto_backup_'))
-            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-          
-          // 我们需要保留 mBackups 对文件（JSON + HTML）
-          const maxFiles = mBackups * 2;
-          if (backupFiles.length > maxFiles) {
-            const filesToDelete = backupFiles.slice(0, backupFiles.length - maxFiles);
-            for (const file of filesToDelete) {
-              if (file.path) {
-                await fs.removeFile(file.path);
-              }
+      // 直接执行清理，不再使用 setTimeout，确保在关闭前完成
+      try {
+        const entries = await fs.readDir(bPath);
+        // 过滤出备份文件并按名称（时间戳）排序
+        const backupFiles = entries
+          .filter(e => e.name?.startsWith('auto_backup_'))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        
+        // 我们需要保留 mBackups 对文件（JSON + HTML）
+        const maxFiles = mBackups * 2;
+        if (backupFiles.length > maxFiles) {
+          const filesToDelete = backupFiles.slice(0, backupFiles.length - maxFiles);
+          for (const file of filesToDelete) {
+            if (file.path) {
+              await fs.removeFile(file.path);
             }
           }
-        } catch (e) {
-          console.error('Cleanup failed:', e);
         }
-      }, 500);
+      } catch (e) {
+        console.error('Cleanup failed:', e);
+      }
     } catch (err) {
       console.error('Auto backup error:', err);
     }
@@ -1061,6 +1059,10 @@ export default function App() {
   };
 
   const [systemTags, setSystemTags] = useState<string[]>(getSystemTags());
+
+  useEffect(() => {
+    systemTagsRef.current = systemTags;
+  }, [systemTags]);
 
   const saveSystemTags = (tags: string[]) => {
     localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tags));
@@ -1353,19 +1355,19 @@ export default function App() {
   const handleNextMonth = () => setCurrentDate(addMonths(currentDate, 1));
   const handleToday = () => setCurrentDate(new Date());
 
-  const openNoteModal = (day: Date, person?: Person) => {
-    const targetPerson = person || selectedPerson;
+  const openNoteModal = useCallback((day: Date, person?: Person) => {
+    const targetPerson = person || selectedPersonRef.current;
     if (!targetPerson) return;
 
     const dateStr = format(day, 'yyyy-MM-dd');
     const storageKey = `${targetPerson.id}_${dateStr}`;
-    const existingNote = fullNotes[storageKey];
+    const existingNote = fullNotesRef.current[storageKey];
     
     setSelectedDay(day);
     // Update the ref so the auto-save effect knows these entries belong to this day/person
     editingContextRef.current = { day: dateStr, personId: targetPerson.id };
     
-    const currentSystemTags = systemTags;
+    const currentSystemTags = systemTagsRef.current;
     
     if (existingNote && existingNote.entries && existingNote.entries.length > 0) {
       let updatedEntries = [...existingNote.entries];
@@ -1391,7 +1393,7 @@ export default function App() {
     }
     setActiveEntryIdx(0);
     setIsModalOpen(true);
-  };
+  }, []); // Empty dependency array makes it perfectly stable
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
