@@ -632,6 +632,7 @@ export default function App() {
   const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [themeColor, setThemeColor] = useState('#3b82f6');
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
@@ -832,7 +833,7 @@ export default function App() {
 
   const runAutoBackup = async () => {
     const bPath = backupPathRef.current;
-    const mBackups = maxBackupsRef.current;
+    const mBackups = parseInt(String(maxBackupsRef.current || '5'));
     if (!isTauri || !bPath) return;
 
     try {
@@ -848,12 +849,14 @@ export default function App() {
       await fs.writeTextFile(jsonFilePath, jsonStr);
       await fs.writeTextFile(htmlFilePath, htmlContent);
       
+      // Cleanup logic
       const entries = await fs.readDir(bPath);
+      // Get all auto backup files and group them by timestamp
       const backupFiles = entries
         .filter(e => e.name?.startsWith('auto_backup_'))
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       
-      // Keep exactly maxBackups pairs (JSON + HTML)
+      // We want to keep mBackups *pairs* of files
       if (backupFiles.length > mBackups * 2) {
         const filesToDelete = backupFiles.slice(0, backupFiles.length - mBackups * 2);
         for (const file of filesToDelete) {
@@ -879,7 +882,11 @@ export default function App() {
         if (backupPathRef.current && !isClosingRef.current) {
           event.preventDefault();
           isClosingRef.current = true;
+          setIsBackingUp(true); // Show backup UI
+          
           try {
+            // Give UI a chance to render the backing up state
+            await new Promise(resolve => setTimeout(resolve, 100));
             await runAutoBackup();
           } catch (e) {
             console.error('Backup failed during close:', e);
@@ -991,9 +998,31 @@ export default function App() {
 
   // Modal Editing State
   const [entries, setEntries] = useState<NoteEntry[]>([]);
+  const [localContent, setLocalContent] = useState('');
   const [activeEntryIdx, setActiveEntryIdx] = useState(0);
   const [isEditingTagName, setIsEditingTagName] = useState(false);
+  // Sync localContent when activeEntryIdx or entries change
+  useEffect(() => {
+    if (entries[activeEntryIdx]) {
+      setLocalContent(entries[activeEntryIdx].content || '');
+    }
+  }, [activeEntryIdx, entries.length, isModalOpen]);
+
+  const handleContentChange = (val: string) => {
+    setLocalContent(val);
+    if (contentTimeoutRef.current) clearTimeout(contentTimeoutRef.current);
+    
+    contentTimeoutRef.current = setTimeout(() => {
+      setEntries(prev => {
+        if (!prev[activeEntryIdx]) return prev;
+        const updated = [...prev];
+        updated[activeEntryIdx] = { ...updated[activeEntryIdx], content: val };
+        return updated;
+      });
+    }, 500);
+  };
   const [tempTagName, setTempTagName] = useState('');
+  const contentTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
@@ -1092,17 +1121,21 @@ export default function App() {
     const timer = setTimeout(() => {
       // Sync to localStorage
       try {
+        // Only sync basic info to localStorage to keep it fast
         localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(people));
-        localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(fullNotes));
+        // For notes, we only sync to file system in Tauri to avoid main thread lag
+        if (!isTauri) {
+          localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(fullNotes));
+        }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
           if (!isTauri) alert("存储空间已满（浏览器限制5MB）。请尝试删除一些旧记录或图片。");
         }
       }
 
-      // Sync to file system
+      // Sync to file system (Tauri only)
       if (isTauri) syncFullDataToFile();
-    }, 1000); // 1 second debounce
+    }, 2000); // Increase debounce to 2 seconds for better performance
 
     return () => clearTimeout(timer);
   }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups]);
@@ -1939,18 +1972,12 @@ export default function App() {
                     <span className="text-[var(--color-calendar-accent)]">[{entries[activeEntryIdx]?.tag}]</span> 备注内容
                   </label>
                   <textarea 
-                    value={entries[activeEntryIdx]?.content || ''}
+                    value={localContent}
                     readOnly={selectedPerson?.id === 1}
                     onPaste={handlePaste}
                     onChange={(e) => {
                       if (selectedPerson?.id === 1) return;
-                      const val = e.target.value;
-                      setEntries(prev => {
-                        if (!prev[activeEntryIdx]) return prev;
-                        const updated = [...prev];
-                        updated[activeEntryIdx] = { ...updated[activeEntryIdx], content: val };
-                        return updated;
-                      });
+                      handleContentChange(e.target.value);
                     }}
                     placeholder={selectedPerson?.id === 1 ? "汇总模式不可编辑" : "在此输入相关记录..."}
                     className={cn(
@@ -2443,6 +2470,15 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Backing Up Overlay */}
+        {isBackingUp && (
+          <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md text-white">
+            <div className="w-16 h-16 border-4 border-[var(--color-calendar-accent)] border-t-transparent rounded-full animate-spin mb-6"></div>
+            <h2 className="text-2xl font-bold mb-2">正在安全退出</h2>
+            <p className="text-[var(--color-calendar-text-muted)]">正在为您备份数据，请稍候...</p>
           </div>
         )}
 
