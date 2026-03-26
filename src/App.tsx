@@ -627,6 +627,7 @@ export default function App() {
   const [importData, setImportData] = useState<{ people: Person[], notes: Record<string, Note>, theme?: string, themeMode?: string } | null>(null);
   const [personToDelete, setPersonToDelete] = useState<number | null>(null);
   const [isMonthSummaryOpen, setIsMonthSummaryOpen] = useState(false);
+  const isClosingRef = useRef(false);
 
   // Check if running in Tauri
   const isTauri = !!(window as any).__TAURI__;
@@ -827,11 +828,16 @@ export default function App() {
         .filter(e => e.name?.startsWith('auto_backup_'))
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       
+      // Keep exactly maxBackups pairs (JSON + HTML)
       if (backupFiles.length > maxBackups * 2) {
         const filesToDelete = backupFiles.slice(0, backupFiles.length - maxBackups * 2);
         for (const file of filesToDelete) {
           if (file.path) {
-            await fs.removeFile(file.path);
+            try {
+              await fs.removeFile(file.path);
+            } catch (e) {
+              console.error('Failed to delete old backup file:', file.path, e);
+            }
           }
         }
       }
@@ -845,10 +851,16 @@ export default function App() {
 
     const setupCloseListener = async () => {
       const unlisten = await appWindow.onCloseRequested(async (event) => {
-        if (backupPath) {
+        if (backupPath && !isClosingRef.current) {
           event.preventDefault();
-          await runAutoBackup();
-          await appWindow.close();
+          isClosingRef.current = true;
+          try {
+            await runAutoBackup();
+          } catch (e) {
+            console.error('Backup failed during close:', e);
+          } finally {
+            await appWindow.close();
+          }
         }
       });
       return unlisten;
@@ -886,14 +898,20 @@ export default function App() {
     event.target.value = '';
   };
 
-  const confirmImport = (mode: 'overwrite' | 'merge') => {
+  const confirmImport = async (mode: 'overwrite' | 'merge') => {
     if (!importData) return;
 
     if (mode === 'overwrite') {
-      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(importData.people));
-      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(importData.notes));
-      if (importData.theme) localStorage.setItem(STORAGE_KEYS.THEME, importData.theme);
-      if (importData.themeMode) localStorage.setItem(STORAGE_KEYS.THEME_MODE, importData.themeMode);
+      saveLocalPeople(importData.people);
+      saveLocalNotes(importData.notes);
+      if (importData.theme) {
+        setThemeColor(importData.theme);
+        localStorage.setItem(STORAGE_KEYS.THEME, importData.theme);
+      }
+      if (importData.themeMode) {
+        setThemeMode(importData.themeMode as 'dark' | 'light');
+        localStorage.setItem(STORAGE_KEYS.THEME_MODE, importData.themeMode);
+      }
     } else {
       // Merge logic
       const currentPeople = getLocalPeople();
@@ -935,8 +953,12 @@ export default function App() {
         }
       });
 
-      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(mergedPeople));
-      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(mergedNotes));
+      saveLocalPeople(mergedPeople);
+      saveLocalNotes(mergedNotes);
+    }
+
+    if (isTauri) {
+      await syncFullDataToFile();
     }
 
     window.location.reload();
@@ -976,6 +998,7 @@ export default function App() {
   const saveSystemTags = (tags: string[]) => {
     localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tags));
     setSystemTags(tags);
+    if (isTauri) syncFullDataToFile();
   };
 
   const getLocalPeople = (): Person[] => {
@@ -1006,13 +1029,59 @@ export default function App() {
   const saveLocalPeople = (newPeople: Person[]) => {
     localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(newPeople));
     setPeople(newPeople);
+    if (isTauri) syncFullDataToFile();
   };
 
   const saveLocalNotes = (newNotes: Record<string, Note>) => {
-    localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(newNotes));
-    // Don't update the 'notes' state with the full map (which uses ID_date keys)
-    // as the calendar expects date keys. The relevant useEffects will handle
-    // updating the 'notes' state for the current view.
+    try {
+      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(newNotes));
+    } catch (e) {
+      console.error("Failed to save notes to localStorage", e);
+      if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+        // In Tauri, we don't alert because the file system save will still work
+        if (!isTauri) {
+          alert("存储空间已满（浏览器限制5MB）。请尝试删除一些旧记录或图片，或者导出备份后清空数据。");
+        }
+      } else {
+        if (!isTauri) alert("保存数据失败，请检查浏览器设置。");
+      }
+    }
+    if (isTauri) syncFullDataToFile();
+  };
+
+  const syncFullDataToFile = async () => {
+    if (!isTauri) return;
+    try {
+      const fullData = {
+        people: getLocalPeople(),
+        notes: getLocalNotes(),
+        systemTags: getSystemTags(),
+        theme: localStorage.getItem(STORAGE_KEYS.THEME),
+        themeMode: localStorage.getItem(STORAGE_KEYS.THEME_MODE),
+        backupPath,
+        maxBackups
+      };
+      
+      // Use a standard path for app data
+      // In Tauri v1, we often use 'AppData' or similar. 
+      // We'll try to use the document directory or a specific app data dir if available.
+      // For simplicity and reliability in this environment, we'll use a known path if possible, 
+      // but path.appDataDir() is the most correct.
+      const dataDir = await path.appDataDir();
+      
+      // Ensure directory exists (Tauri fs.createDir with recursive: true)
+      try {
+        await fs.createDir(dataDir, { recursive: true });
+      } catch (e) {
+        // Ignore if already exists
+      }
+
+      const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
+      await fs.writeTextFile(dataPath, JSON.stringify(fullData));
+      console.log('Data synced to file system:', dataPath);
+    } catch (e) {
+      console.error("Failed to sync data to file system", e);
+    }
   };
 
   const getSummaryDataForDay = (day: Date) => {
@@ -1037,34 +1106,77 @@ export default function App() {
 
   // Fetch people and notes on mount
   useEffect(() => {
-    const initialPeople = getLocalPeople();
-    setPeople(initialPeople);
-    if (initialPeople.length > 0) {
-      setSelectedPerson(initialPeople[0]);
-    }
-    
-    const initialNotes = getLocalNotes();
-    setNotes(initialNotes);
-    
-    const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
-    if (savedTheme) setThemeColor(savedTheme);
-    
-    const savedMode = localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light';
-    if (savedMode) setThemeMode(savedMode);
-    
-    setIsLoading(false);
+    const loadInitialData = async () => {
+      let peopleData = getLocalPeople();
+      let notesData = getLocalNotes();
+      let tagsData = getSystemTags();
+      let theme = localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6';
+      let mode = (localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark';
+      let bPath = localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '';
+      let mBackups = parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10');
+
+      if (isTauri) {
+        try {
+          const dataDir = await path.appDataDir();
+          const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
+          
+          const content = await fs.readTextFile(dataPath);
+          if (content) {
+            const fullData = JSON.parse(content);
+            if (fullData.people) peopleData = fullData.people;
+            if (fullData.notes) notesData = fullData.notes;
+            if (fullData.systemTags) tagsData = fullData.systemTags;
+            if (fullData.theme) theme = fullData.theme;
+            if (fullData.themeMode) mode = fullData.themeMode;
+            if (fullData.backupPath) bPath = fullData.backupPath;
+            if (fullData.maxBackups) mBackups = fullData.maxBackups;
+
+            // Sync to localStorage as a cache
+            localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(peopleData));
+            localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(notesData));
+            localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tagsData));
+            localStorage.setItem(STORAGE_KEYS.THEME, theme);
+            localStorage.setItem(STORAGE_KEYS.THEME_MODE, mode);
+            localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, bPath);
+            localStorage.setItem(STORAGE_KEYS.MAX_BACKUPS, mBackups.toString());
+          }
+        } catch (e) {
+          console.log("No persistent data file found or failed to read, using localStorage.");
+        }
+      }
+
+      setPeople(peopleData);
+      if (peopleData.length > 0) {
+        setSelectedPerson(peopleData[0]);
+      }
+      setNotes(notesData);
+      setSystemTags(tagsData);
+      setThemeColor(theme);
+      setThemeMode(mode);
+      setBackupPath(bPath);
+      setMaxBackups(mBackups);
+      setIsLoading(false);
+    };
+
+    loadInitialData();
   }, []);
 
   // Apply theme to CSS variables and document
   useEffect(() => {
     document.documentElement.style.setProperty('--calendar-accent', themeColor);
     localStorage.setItem(STORAGE_KEYS.THEME, themeColor);
+    if (isTauri && !isLoading) syncFullDataToFile();
   }, [themeColor]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
     localStorage.setItem(STORAGE_KEYS.THEME_MODE, themeMode);
+    if (isTauri && !isLoading) syncFullDataToFile();
   }, [themeMode]);
+
+  useEffect(() => {
+    if (isTauri && !isLoading) syncFullDataToFile();
+  }, [backupPath, maxBackups]);
 
   // Sync notes when date or person changes
   useEffect(() => {
@@ -1244,6 +1356,41 @@ export default function App() {
     }
   };
 
+  const compressImage = (base64: string, maxWidth = 1000, maxHeight = 1000, quality = 0.7): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(base64);
+        }
+      };
+      img.onerror = () => resolve(base64);
+    });
+  };
+
   const handlePaste = (e: React.ClipboardEvent) => {
     if (selectedPerson?.id === 1) return;
     const items = e.clipboardData.items;
@@ -1264,13 +1411,16 @@ export default function App() {
         });
       });
 
-      Promise.all(readers).then(newImages => {
+      Promise.all(readers).then(async newImages => {
+        // Compress images to save space and prevent crashes
+        const compressedImages = await Promise.all(newImages.map(img => compressImage(img)));
+        
         setEntries(prev => {
           if (!prev[activeEntryIdx]) return prev;
           const updated = [...prev];
           updated[activeEntryIdx] = {
             ...updated[activeEntryIdx],
-            images: [...updated[activeEntryIdx].images, ...newImages]
+            images: [...updated[activeEntryIdx].images, ...compressedImages]
           };
           return updated;
         });
