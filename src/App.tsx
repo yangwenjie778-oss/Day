@@ -604,8 +604,23 @@ export default function App() {
   };
 
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [notes, setNotes] = useState<Record<string, Note>>({});
+  const [fullNotes, setFullNotes] = useState<Record<string, Note>>({});
   const [people, setPeople] = useState<Person[]>([]);
+  const [notes, setNotes] = useState<Record<string, Note>>({}); // Filtered notes for current person
+  
+  const fullNotesRef = useRef<Record<string, Note>>({});
+  const peopleRef = useRef<Person[]>([]);
+  const backupPathRef = useRef<string>('');
+  const maxBackupsRef = useRef<number>(10);
+
+  useEffect(() => {
+    fullNotesRef.current = fullNotes;
+  }, [fullNotes]);
+
+  useEffect(() => {
+    peopleRef.current = people;
+  }, [people]);
+
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -622,6 +637,14 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
   const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
   const [maxBackups, setMaxBackups] = useState<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
+
+  useEffect(() => {
+    backupPathRef.current = backupPath;
+  }, [backupPath]);
+
+  useEffect(() => {
+    maxBackupsRef.current = maxBackups;
+  }, [maxBackups]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
   const [importData, setImportData] = useState<{ people: Person[], notes: Record<string, Note>, theme?: string, themeMode?: string } | null>(null);
@@ -634,8 +657,8 @@ export default function App() {
 
   // --- Export/Import Logic ---
   const generateBackupData = async () => {
-    const peopleData = getLocalPeople();
-    const notesData = getLocalNotes();
+    const peopleData = peopleRef.current;
+    const notesData = fullNotesRef.current;
     
     // JSON
     const jsonData = {
@@ -649,9 +672,9 @@ export default function App() {
     
     // HTML
     const groupedByDate: Record<string, Note[]> = {};
-    Object.entries(notesData).forEach(([key, note]) => {
+    Object.entries(notesData).forEach(([key, note]: [string, any]) => {
       const date = key.includes('_') ? key.split('_')[1] : key;
-      const validEntries = note.entries.filter(entry => 
+      const validEntries = note.entries.filter((entry: any) => 
         (entry.content && entry.content.trim() !== '') || 
         (entry.images && entry.images.length > 0)
       );
@@ -808,7 +831,9 @@ export default function App() {
   };
 
   const runAutoBackup = async () => {
-    if (!isTauri || !backupPath) return;
+    const bPath = backupPathRef.current;
+    const mBackups = maxBackupsRef.current;
+    if (!isTauri || !bPath) return;
 
     try {
       const { jsonStr, htmlContent } = await generateBackupData();
@@ -817,20 +842,20 @@ export default function App() {
       const jsonFileName = `auto_backup_${timestamp}.json`;
       const htmlFileName = `auto_backup_${timestamp}.html`;
       
-      const jsonFilePath = await path.join(backupPath, jsonFileName);
-      const htmlFilePath = await path.join(backupPath, htmlFileName);
+      const jsonFilePath = await path.join(bPath, jsonFileName);
+      const htmlFilePath = await path.join(bPath, htmlFileName);
       
       await fs.writeTextFile(jsonFilePath, jsonStr);
       await fs.writeTextFile(htmlFilePath, htmlContent);
       
-      const entries = await fs.readDir(backupPath);
+      const entries = await fs.readDir(bPath);
       const backupFiles = entries
         .filter(e => e.name?.startsWith('auto_backup_'))
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       
       // Keep exactly maxBackups pairs (JSON + HTML)
-      if (backupFiles.length > maxBackups * 2) {
-        const filesToDelete = backupFiles.slice(0, backupFiles.length - maxBackups * 2);
+      if (backupFiles.length > mBackups * 2) {
+        const filesToDelete = backupFiles.slice(0, backupFiles.length - mBackups * 2);
         for (const file of filesToDelete) {
           if (file.path) {
             try {
@@ -851,7 +876,7 @@ export default function App() {
 
     const setupCloseListener = async () => {
       const unlisten = await appWindow.onCloseRequested(async (event) => {
-        if (backupPath && !isClosingRef.current) {
+        if (backupPathRef.current && !isClosingRef.current) {
           event.preventDefault();
           isClosingRef.current = true;
           try {
@@ -873,7 +898,7 @@ export default function App() {
         if (typeof unlisten === 'function') unlisten();
       });
     };
-  }, [backupPath, maxBackups]);
+  }, []);
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -900,68 +925,68 @@ export default function App() {
 
   const confirmImport = async (mode: 'overwrite' | 'merge') => {
     if (!importData) return;
+    setIsSubmitting(true);
+    
+    try {
+      if (mode === 'overwrite') {
+        setPeople(importData.people);
+        setFullNotes(importData.notes);
+        if (importData.theme) setThemeColor(importData.theme);
+        if (importData.themeMode) setThemeMode(importData.themeMode as 'dark' | 'light');
+      } else {
+        // Merge people
+        const currentPeople = people;
+        const mergedPeople = [...currentPeople];
+        const personIdMap: Record<number, number> = {};
 
-    if (mode === 'overwrite') {
-      saveLocalPeople(importData.people);
-      saveLocalNotes(importData.notes);
-      if (importData.theme) {
-        setThemeColor(importData.theme);
-        localStorage.setItem(STORAGE_KEYS.THEME, importData.theme);
-      }
-      if (importData.themeMode) {
-        setThemeMode(importData.themeMode as 'dark' | 'light');
-        localStorage.setItem(STORAGE_KEYS.THEME_MODE, importData.themeMode);
-      }
-    } else {
-      // Merge logic
-      const currentPeople = getLocalPeople();
-      const currentNotes = getLocalNotes();
-      
-      // Merge people (avoid duplicates by name)
-      const mergedPeople = [...currentPeople];
-      const personIdMap: Record<number, number> = {}; // Map old ID to new ID if needed
-
-      importData.people.forEach(newP => {
-        if (newP.id === 1) return; // Skip summary
-        const existing = mergedPeople.find(p => p.name === newP.name);
-        if (!existing) {
-          const newId = Date.now() + Math.floor(Math.random() * 1000);
-          personIdMap[newP.id] = newId;
-          mergedPeople.push({ ...newP, id: newId });
-        } else {
-          personIdMap[newP.id] = existing.id;
-        }
-      });
-
-      // Merge notes
-      const mergedNotes: Record<string, Note> = { ...currentNotes };
-      Object.entries(importData.notes).forEach(([key, noteData]) => {
-        const note = noteData as Note;
-        const [oldPersonId, dateStr] = key.split('_');
-        const newPersonId = personIdMap[parseInt(oldPersonId)];
-        if (newPersonId) {
-          const newKey = `${newPersonId}_${dateStr}`;
-          if (mergedNotes[newKey]) {
-            // Merge entries if both exist
-            mergedNotes[newKey].entries = [
-              ...mergedNotes[newKey].entries,
-              ...note.entries
-            ];
+        importData.people.forEach(newP => {
+          if (newP.id === 1) return;
+          const existing = mergedPeople.find(p => p.name === newP.name);
+          if (!existing) {
+            const newId = Date.now() + Math.floor(Math.random() * 1000);
+            personIdMap[newP.id] = newId;
+            mergedPeople.push({ ...newP, id: newId });
           } else {
-            mergedNotes[newKey] = { ...note, person_id: newPersonId };
+            personIdMap[newP.id] = existing.id;
           }
-        }
-      });
+        });
+        setPeople(mergedPeople);
 
-      saveLocalPeople(mergedPeople);
-      saveLocalNotes(mergedNotes);
+        // Merge notes
+        const currentNotes = fullNotes;
+        const mergedNotes = { ...currentNotes };
+        Object.entries(importData.notes).forEach(([key, noteData]) => {
+          const note = noteData as Note;
+          const [oldPersonId, dateStr] = key.split('_');
+          const newPersonId = personIdMap[parseInt(oldPersonId)];
+          if (newPersonId) {
+            const newKey = `${newPersonId}_${dateStr}`;
+            if (mergedNotes[newKey]) {
+              mergedNotes[newKey].entries = [
+                ...mergedNotes[newKey].entries,
+                ...note.entries
+              ];
+            } else {
+              mergedNotes[newKey] = { ...note, person_id: newPersonId };
+            }
+          }
+        });
+        setFullNotes(mergedNotes);
+      }
+      
+      // Wait for state to settle
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (isTauri) await syncFullDataToFile();
+      
+      alert('导入成功！');
+      window.location.reload();
+    } catch (e) {
+      console.error('Import failed:', e);
+      alert('导入失败，请检查文件格式。');
+    } finally {
+      setIsSubmitting(false);
+      setIsImportConfirmOpen(false);
     }
-
-    if (isTauri) {
-      await syncFullDataToFile();
-    }
-
-    window.location.reload();
   };
 
   // Modal Editing State
@@ -1027,54 +1052,30 @@ export default function App() {
   };
 
   const saveLocalPeople = (newPeople: Person[]) => {
-    localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(newPeople));
     setPeople(newPeople);
-    if (isTauri) syncFullDataToFile();
   };
 
   const saveLocalNotes = (newNotes: Record<string, Note>) => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(newNotes));
-    } catch (e) {
-      console.error("Failed to save notes to localStorage", e);
-      if (e instanceof DOMException && e.name === 'QuotaExceededError') {
-        // In Tauri, we don't alert because the file system save will still work
-        if (!isTauri) {
-          alert("存储空间已满（浏览器限制5MB）。请尝试删除一些旧记录或图片，或者导出备份后清空数据。");
-        }
-      } else {
-        if (!isTauri) alert("保存数据失败，请检查浏览器设置。");
-      }
-    }
-    if (isTauri) syncFullDataToFile();
+    setFullNotes(newNotes);
   };
 
   const syncFullDataToFile = async () => {
     if (!isTauri) return;
     try {
       const fullData = {
-        people: getLocalPeople(),
-        notes: getLocalNotes(),
-        systemTags: getSystemTags(),
-        theme: localStorage.getItem(STORAGE_KEYS.THEME),
-        themeMode: localStorage.getItem(STORAGE_KEYS.THEME_MODE),
-        backupPath,
-        maxBackups
+        people: peopleRef.current,
+        notes: fullNotesRef.current,
+        systemTags: systemTags,
+        theme: themeColor,
+        themeMode: themeMode,
+        backupPath: backupPathRef.current,
+        maxBackups: maxBackupsRef.current
       };
       
-      // Use a standard path for app data
-      // In Tauri v1, we often use 'AppData' or similar. 
-      // We'll try to use the document directory or a specific app data dir if available.
-      // For simplicity and reliability in this environment, we'll use a known path if possible, 
-      // but path.appDataDir() is the most correct.
       const dataDir = await path.appDataDir();
-      
-      // Ensure directory exists (Tauri fs.createDir with recursive: true)
       try {
         await fs.createDir(dataDir, { recursive: true });
-      } catch (e) {
-        // Ignore if already exists
-      }
+      } catch (e) {}
 
       const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
       await fs.writeTextFile(dataPath, JSON.stringify(fullData));
@@ -1084,11 +1085,33 @@ export default function App() {
     }
   };
 
+  // Debounced sync to storage
+  useEffect(() => {
+    if (isLoading) return;
+
+    const timer = setTimeout(() => {
+      // Sync to localStorage
+      try {
+        localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(people));
+        localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(fullNotes));
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+          if (!isTauri) alert("存储空间已满（浏览器限制5MB）。请尝试删除一些旧记录或图片。");
+        }
+      }
+
+      // Sync to file system
+      if (isTauri) syncFullDataToFile();
+    }, 1000); // 1 second debounce
+
+    return () => clearTimeout(timer);
+  }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups]);
+
   const getSummaryDataForDay = (day: Date) => {
     if (!day) return [];
     const dateStr = format(day, 'yyyy-MM-dd');
-    const allNotes = getLocalNotes();
-    const allPeople = getLocalPeople();
+    const allNotes = fullNotes;
+    const allPeople = people;
     
     const summary: { person: Person, note: Note }[] = [];
     
@@ -1149,7 +1172,7 @@ export default function App() {
       if (peopleData.length > 0) {
         setSelectedPerson(peopleData[0]);
       }
-      setNotes(notesData);
+      setFullNotes(notesData);
       setSystemTags(tagsData);
       setThemeColor(theme);
       setThemeMode(mode);
@@ -1182,24 +1205,23 @@ export default function App() {
   useEffect(() => {
     if (!selectedPerson) return;
     
-    const allNotes = getLocalNotes();
     const notesMap: Record<string, Note> = {};
 
-    Object.values(allNotes).forEach(note => {
+    Object.values(fullNotes).forEach((note: any) => {
       if (selectedPerson.id === 1) {
         // Aggregate entries from all people for the summary view
-        const person = getLocalPeople().find(p => p.id === note.person_id);
+        const person = people.find(p => p.id === note.person_id);
         const personName = person ? person.name : '未知';
         
         if (!notesMap[note.date]) {
           notesMap[note.date] = { 
             ...note, 
-            entries: note.entries.map(e => ({ ...e, tag: `${personName} - ${e.tag}` })) 
+            entries: note.entries.map((e: any) => ({ ...e, tag: `${personName} - ${e.tag}` })) 
           };
         } else {
           notesMap[note.date].entries = [
             ...notesMap[note.date].entries,
-            ...note.entries.map(e => ({ ...e, tag: `${personName} - ${e.tag}` }))
+            ...note.entries.map((e: any) => ({ ...e, tag: `${personName} - ${e.tag}` }))
           ];
         }
       } else if (note.person_id === selectedPerson.id) {
@@ -1208,7 +1230,7 @@ export default function App() {
     });
     
     setNotes(notesMap);
-  }, [currentDate, selectedPerson]);
+  }, [fullNotes, people, selectedPerson]);
 
   // Close picker on outside click
   useEffect(() => {
@@ -1249,7 +1271,6 @@ export default function App() {
       return;
     }
 
-    const allNotes = getLocalNotes();
     const newNote: Note = {
       id: Date.now(),
       person_id: selectedPerson.id,
@@ -1257,15 +1278,11 @@ export default function App() {
       entries: entries
     };
     
-    allNotes[storageKey] = newNote;
-    saveLocalNotes(allNotes);
-    
-    // Update local state for the calendar view
-    setNotes(prev => ({
+    setFullNotes(prev => ({
       ...prev,
-      [dateStr]: newNote
+      [storageKey]: newNote
     }));
-  }, [entries, selectedDay, selectedPerson]);
+  }, [entries]);
 
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentDate);
@@ -1295,15 +1312,14 @@ export default function App() {
     if (!targetPerson) return;
 
     const dateStr = format(day, 'yyyy-MM-dd');
-    const allNotes = getLocalNotes();
     const storageKey = `${targetPerson.id}_${dateStr}`;
-    const existingNote = allNotes[storageKey];
+    const existingNote = fullNotes[storageKey];
     
     setSelectedDay(day);
     // Update the ref so the auto-save effect knows these entries belong to this day/person
     editingContextRef.current = { day: dateStr, personId: targetPerson.id };
     
-    const currentSystemTags = getSystemTags();
+    const currentSystemTags = systemTags;
     
     if (existingNote && existingNote.entries && existingNote.entries.length > 0) {
       let updatedEntries = [...existingNote.entries];
@@ -1342,13 +1358,14 @@ export default function App() {
         });
       });
 
-      Promise.all(readers).then(newImages => {
+      Promise.all(readers).then(async newImages => {
+        const compressedImages = await Promise.all(newImages.map(img => compressImage(img)));
         setEntries(prev => {
           if (!prev[activeEntryIdx]) return prev;
           const updated = [...prev];
           updated[activeEntryIdx] = {
             ...updated[activeEntryIdx],
-            images: [...updated[activeEntryIdx].images, ...newImages]
+            images: [...updated[activeEntryIdx].images, ...compressedImages]
           };
           return updated;
         });
@@ -1446,7 +1463,7 @@ export default function App() {
     setIsSubmitting(true);
     
     try {
-      const allNotes = getLocalNotes();
+      const allNotes = { ...fullNotes };
       delete allNotes[storageKey];
       saveLocalNotes(allNotes);
       
@@ -1503,7 +1520,7 @@ export default function App() {
     if (!newPersonName.trim() || isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const currentPeople = getLocalPeople();
+      const currentPeople = people;
       const newPerson: Person = {
         id: Date.now(),
         name: newPersonName.trim(),
@@ -1532,14 +1549,14 @@ export default function App() {
     if (personToDelete === null) return;
     const id = personToDelete;
     try {
-      const currentPeople = getLocalPeople();
+      const currentPeople = people;
       const updatedPeople = currentPeople.filter(p => p.id !== id);
       saveLocalPeople(updatedPeople);
       
       // Also delete their notes
-      const allNotes = getLocalNotes();
+      const allNotes = { ...fullNotes };
       const filteredNotes: Record<string, Note> = {};
-      Object.entries(allNotes).forEach(([key, note]) => {
+      Object.entries(allNotes).forEach(([key, note]: [string, any]) => {
         if (!key.startsWith(`${id}_`)) {
           filteredNotes[key] = note;
         }
@@ -1570,21 +1587,21 @@ export default function App() {
     
     // Local search implementation
     setTimeout(() => {
-      const allNotes = getLocalNotes();
-      const currentPeople = getLocalPeople();
+      const allNotes = fullNotes;
+      const currentPeople = people;
       const results: any[] = [];
       const q = query.toLowerCase();
 
-      Object.entries(allNotes).forEach(([key, note]) => {
+      Object.entries(allNotes).forEach(([key, note]: [string, any]) => {
         const person = currentPeople.find(p => p.id === note.person_id);
         if (!person) return;
 
-        const matchingEntries = note.entries.filter(entry => 
+        const matchingEntries = note.entries.filter((entry: any) => 
           entry.content.toLowerCase().includes(q) || 
           entry.tag.toLowerCase().includes(q)
         );
 
-        matchingEntries.forEach(entry => {
+        matchingEntries.forEach((entry: any) => {
           results.push({
             ...note,
             person_name: person.name,
@@ -2217,7 +2234,7 @@ export default function App() {
           <MonthSummaryModal 
             currentDate={currentDate}
             people={people}
-            allNotes={getLocalNotes()}
+            allNotes={fullNotes}
             onClose={() => setIsMonthSummaryOpen(false)}
             onPreviewImage={(src) => {
               setPreviewImage(src);
