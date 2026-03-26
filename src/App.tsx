@@ -194,6 +194,14 @@ const CalendarDayCell = React.memo(({
       </div>
     </div>
   );
+}, (prev, next) => {
+  // 只有当日期、选中状态或笔记内容发生变化时才重绘
+  return (
+    prev.isSelected === next.isSelected &&
+    prev.day.date.getTime() === next.day.date.getTime() &&
+    prev.day.isCurrentMonth === next.day.isCurrentMonth &&
+    JSON.stringify(prev.note) === JSON.stringify(next.note)
+  );
 });
 
 const MonthSummaryModal = memo(({ 
@@ -833,12 +841,14 @@ export default function App() {
 
   const runAutoBackup = async () => {
     const bPath = backupPathRef.current;
-    const mBackups = parseInt(String(maxBackupsRef.current || '5'));
+    // 强制转换为数字，并设置合理的默认值
+    const mBackups = Math.max(1, parseInt(String(maxBackupsRef.current || '5'), 10));
     if (!isTauri || !bPath) return;
 
     try {
       const { jsonStr, htmlContent } = await generateBackupData();
-      const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
+      const now = new Date();
+      const timestamp = format(now, 'yyyyMMdd_HHmmss');
       
       const jsonFileName = `auto_backup_${timestamp}.json`;
       const htmlFileName = `auto_backup_${timestamp}.html`;
@@ -849,26 +859,29 @@ export default function App() {
       await fs.writeTextFile(jsonFilePath, jsonStr);
       await fs.writeTextFile(htmlFilePath, htmlContent);
       
-      // Cleanup logic
-      const entries = await fs.readDir(bPath);
-      // Get all auto backup files and group them by timestamp
-      const backupFiles = entries
-        .filter(e => e.name?.startsWith('auto_backup_'))
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-      
-      // We want to keep mBackups *pairs* of files
-      if (backupFiles.length > mBackups * 2) {
-        const filesToDelete = backupFiles.slice(0, backupFiles.length - mBackups * 2);
-        for (const file of filesToDelete) {
-          if (file.path) {
-            try {
-              await fs.removeFile(file.path);
-            } catch (e) {
-              console.error('Failed to delete old backup file:', file.path, e);
+      // 延迟清理，确保写入已完成
+      setTimeout(async () => {
+        try {
+          const entries = await fs.readDir(bPath);
+          // 过滤出备份文件并按名称（时间戳）排序
+          const backupFiles = entries
+            .filter(e => e.name?.startsWith('auto_backup_'))
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          
+          // 我们需要保留 mBackups 对文件（JSON + HTML）
+          const maxFiles = mBackups * 2;
+          if (backupFiles.length > maxFiles) {
+            const filesToDelete = backupFiles.slice(0, backupFiles.length - maxFiles);
+            for (const file of filesToDelete) {
+              if (file.path) {
+                await fs.removeFile(file.path);
+              }
             }
           }
+        } catch (e) {
+          console.error('Cleanup failed:', e);
         }
-      }
+      }, 500);
     } catch (err) {
       console.error('Auto backup error:', err);
     }
