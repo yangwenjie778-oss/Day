@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, memo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, memo, useCallback, useTransition } from 'react';
 import { 
   format, 
   addMonths, 
@@ -135,18 +135,17 @@ function ContextMenu({ x, y, onClose, onDelete, onAdd }: ContextMenuProps) {
 // Memoized Day Component to prevent unnecessary re-renders
 const CalendarDayCell = React.memo(({ 
   day, 
-  note, 
   isSelected, 
   onClick, 
   onContextMenu 
 }: { 
   day: CalendarDay, 
-  note: any, 
   isSelected: boolean, 
   onClick: (date: Date) => void,
   onContextMenu: (e: React.MouseEvent, date: Date) => void
 }) => {
   const isToday = isSameDay(day.date, new Date());
+  const note = day.note;
   
   return (
     <div 
@@ -193,6 +192,211 @@ const CalendarDayCell = React.memo(({
         )}
       </div>
     </div>
+  );
+}, (prev, next) => {
+  return (
+    prev.isSelected === next.isSelected &&
+    prev.day.isCurrentMonth === next.day.isCurrentMonth &&
+    prev.day.date.getTime() === next.day.date.getTime() &&
+    prev.day.note === next.day.note
+  );
+});
+
+// Memoized Calendar Grid to isolate it from Modal state changes
+const Sidebar = memo(({ 
+  people, 
+  selectedPerson, 
+  setSelectedPerson, 
+  setIsAddPersonModalOpen, 
+  handleContextMenu, 
+  setIsSettingsOpen 
+}: any) => {
+  return (
+    <aside className="w-64 border-r border-[var(--color-calendar-border)] flex flex-col bg-[var(--color-calendar-sidebar-bg)]">
+      <div className="p-6 space-y-8">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">我的日历</h3>
+            <Plus size={14} className="text-[var(--color-calendar-text-dim)] cursor-pointer hover:text-white" onClick={() => setIsAddPersonModalOpen(true)} />
+          </div>
+          <div className="space-y-1">
+            {people.slice(0, 1).map((p: Person) => (
+              <div 
+                key={p.id}
+                onClick={() => setSelectedPerson(p)}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors",
+                  selectedPerson?.id === p.id ? "bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)]" : "hover:bg-[var(--color-calendar-surface-hover)]"
+                )}
+              >
+                <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: p.avatar_color }}>
+                  {p.name[0]}
+                </div>
+                <span className="text-sm font-medium">{p.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">当前人员</h3>
+            <Plus size={14} className="text-[var(--color-calendar-text-dim)] cursor-pointer hover:text-white" onClick={() => setIsAddPersonModalOpen(true)} />
+          </div>
+          <div className="space-y-1">
+            {people.slice(1).map((p: Person) => (
+              <div 
+                key={p.id}
+                onClick={() => setSelectedPerson(p)}
+                onContextMenu={(e) => handleContextMenu(e, p.id)}
+                className={cn(
+                  "flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors group",
+                  selectedPerson?.id === p.id ? "bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)]" : "hover:bg-[var(--color-calendar-surface-hover)]"
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: p.avatar_color }}>
+                    {p.name[0]}
+                  </div>
+                  <span className="text-sm font-medium">{p.name}</span>
+                </div>
+                {selectedPerson?.id === p.id && <CheckCircle2 size={14} className="text-[var(--color-calendar-accent)]" />}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-auto p-6 border-t border-[var(--color-calendar-border)]">
+        <button 
+          onClick={() => setIsSettingsOpen(true)}
+          className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-[var(--color-calendar-surface-hover)] w-full text-[var(--color-calendar-text-muted)] hover:text-white"
+        >
+          <Settings size={18} />
+          <span className="text-sm font-medium">设置</span>
+        </button>
+      </div>
+    </aside>
+  );
+});
+
+const Header = memo(({ 
+  currentDate, 
+  handleToday, 
+  handlePrevMonth, 
+  handleNextMonth, 
+  isPickerOpen, 
+  setIsPickerOpen, 
+  pickerRef, 
+  selectedPerson, 
+  setCurrentDate, 
+  setIsMonthSummaryOpen, 
+  setIsSearchModalOpen 
+}: any) => {
+  return (
+    <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-calendar-border)]">
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={handleToday}
+          className="px-4 py-1.5 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-surface-hover)]/80 rounded text-sm font-medium transition-colors"
+        >
+          今天
+        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={handlePrevMonth} className="p-1 hover:bg-[var(--color-calendar-surface-hover)] rounded transition-colors">
+            <ChevronLeft size={20} />
+          </button>
+          <button onClick={handleNextMonth} className="p-1 hover:bg-[var(--color-calendar-surface-hover)] rounded transition-colors">
+            <ChevronRight size={20} />
+          </button>
+        </div>
+        <div className="relative" ref={pickerRef}>
+          <button 
+            onClick={() => setIsPickerOpen(!isPickerOpen)}
+            className="flex items-center gap-1 text-2xl font-semibold ml-2 hover:bg-[var(--color-calendar-surface-hover)] px-2 py-1 rounded transition-colors"
+          >
+            {format(currentDate, 'yyyy年M月')}
+            <ChevronDown size={20} className={cn("transition-transform", isPickerOpen && "rotate-180")} />
+          </button>
+          {selectedPerson?.id === 1 && (
+            <span className="absolute -top-1 -right-16 px-2 py-0.5 bg-[var(--color-calendar-accent)]/20 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded border border-[var(--color-calendar-accent)]/30 uppercase tracking-wider">
+              汇总
+            </span>
+          )}
+            {isPickerOpen && (
+              <YearMonthPicker 
+                currentDate={currentDate} 
+                onSelect={setCurrentDate} 
+                onClose={() => setIsPickerOpen(false)} 
+              />
+            )}
+          </div>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => setIsMonthSummaryOpen(true)}
+          className="flex items-center gap-2 px-4 py-1.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/20 rounded-lg text-sm font-bold transition-all border border-[var(--color-calendar-accent)]/20 shadow-sm"
+        >
+          <FileText size={16} />
+          月总结
+        </button>
+        <div className="flex bg-[var(--color-calendar-surface-hover)] rounded p-1">
+          {['日', '周', '月', '列表'].map((view) => (
+            <button 
+              key={view}
+              className={cn(
+                "px-4 py-1 rounded text-sm transition-colors",
+                view === '月' ? "bg-[var(--color-calendar-surface-hover)] text-white" : "text-[var(--color-calendar-text-muted)] hover:text-white"
+              )}
+            >
+              {view}
+            </button>
+          ))}
+        </div>
+        <button 
+          onClick={() => setIsSearchModalOpen(true)}
+          className="p-2 hover:bg-[var(--color-calendar-surface-hover)] rounded transition-colors"
+        >
+          <Search size={20} className="text-[var(--color-calendar-text-dim)]" />
+        </button>
+      </div>
+    </header>
+  );
+});
+
+// Memoized Calendar Grid to isolate it from Modal state changes
+const CalendarGrid = React.memo(({ 
+  calendarDays, 
+  selectedDay, 
+  notes,
+  openNoteModal,
+  onContextMenu
+}: { 
+  calendarDays: CalendarDay[], 
+  selectedDay: Date | null, 
+  notes: Record<string, Note>,
+  openNoteModal: (day: Date) => void,
+  onContextMenu: (e: React.MouseEvent, date: Date) => void
+}) => {
+  return (
+    <main className="flex-1 overflow-auto">
+      <div className="grid grid-cols-7 h-full min-h-[600px]">
+        {calendarDays.map((day, idx) => {
+          const dateStr = format(day.date, 'yyyy-MM-dd');
+          const note = notes[dateStr];
+          return (
+            <CalendarDayCell 
+              key={idx}
+              day={{ ...day, note }}
+              isSelected={selectedDay ? isSameDay(day.date, selectedDay) : false}
+              onClick={openNoteModal}
+              onContextMenu={onContextMenu}
+            />
+          );
+        })}
+      </div>
+    </main>
   );
 });
 
@@ -592,6 +796,452 @@ const MonthSummaryModal = memo(({
   );
 });
 
+// Memoized Note Modal to isolate its state from the rest of the app
+const NoteModal = React.memo(({ 
+  isOpen, 
+  onClose, 
+  selectedDay, 
+  selectedPerson, 
+  initialEntries, 
+  onSave,
+  getSummaryDataForDay, 
+  setPreviewImage, 
+  setIsPreviewOpen,
+  isSubmitting,
+  setIsConfirmDeleteOpen
+}: any) => {
+  const [entries, setEntries] = useState<NoteEntry[]>([]);
+  const [localContent, setLocalContent] = useState('');
+  const [activeEntryIdx, setActiveEntryIdx] = useState(0);
+  const [isEditingTagName, setIsEditingTagName] = useState(false);
+  const [tempTagName, setTempTagName] = useState('');
+  const contentTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && !hasInitialized) {
+      setEntries(initialEntries || []);
+      setActiveEntryIdx(0);
+      setHasInitialized(true);
+    }
+  }, [isOpen, initialEntries, hasInitialized]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setHasInitialized(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (entries[activeEntryIdx]) {
+      setLocalContent(entries[activeEntryIdx].content || '');
+    } else {
+      setLocalContent('');
+    }
+  }, [activeEntryIdx, entries]);
+
+  const handleContentChange = (val: string) => {
+    setLocalContent(val);
+    if (contentTimeoutRef.current) clearTimeout(contentTimeoutRef.current);
+    
+    contentTimeoutRef.current = setTimeout(() => {
+      setEntries(prev => {
+        if (!prev[activeEntryIdx]) return prev;
+        const updated = [...prev];
+        updated[activeEntryIdx] = { ...updated[activeEntryIdx], content: val };
+        return updated;
+      });
+    }, 300);
+  };
+
+  const handleClose = () => {
+    if (contentTimeoutRef.current) clearTimeout(contentTimeoutRef.current);
+    onSave(entries);
+    onClose();
+  };
+
+  const compressImage = (base64: string, maxWidth = 1000, maxHeight = 1000, quality = 0.7): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(base64);
+        }
+      };
+      img.onerror = () => resolve(base64);
+    });
+  };
+
+  if (!isOpen) return null;
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) files.push(file);
+      }
+    }
+
+    if (files.length > 0) {
+      const readers = files.map((file: File) => {
+        return new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      });
+
+      Promise.all(readers).then(async newImages => {
+        const compressedImages = await Promise.all(newImages.map(img => compressImage(img)));
+        setEntries(prev => {
+          if (!prev[activeEntryIdx]) return prev;
+          const updated = [...prev];
+          updated[activeEntryIdx] = {
+            ...updated[activeEntryIdx],
+            images: [...(updated[activeEntryIdx].images || []), ...compressedImages]
+          };
+          return updated;
+        });
+      });
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const readers = Array.from(files).map((file: File) => {
+        return new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+      });
+
+      Promise.all(readers).then(async newImages => {
+        const compressedImages = await Promise.all(newImages.map(img => compressImage(img)));
+        setEntries(prev => {
+          if (!prev[activeEntryIdx]) return prev;
+          const updated = [...prev];
+          updated[activeEntryIdx] = {
+            ...updated[activeEntryIdx],
+            images: [...(updated[activeEntryIdx].images || []), ...compressedImages]
+          };
+          return updated;
+        });
+      });
+    }
+    e.target.value = '';
+  };
+
+  const removeImage = (imgIdx: number) => {
+    setEntries(prev => {
+      const updated = [...prev];
+      if (!updated[activeEntryIdx]) return prev;
+      const updatedImages = [...(updated[activeEntryIdx].images || [])];
+      updatedImages.splice(imgIdx, 1);
+      updated[activeEntryIdx] = {
+        ...updated[activeEntryIdx],
+        images: updatedImages
+      };
+      return updated;
+    });
+  };
+
+  const addTag = () => {
+    setEntries(prev => [...prev, { tag: '新标签', content: '', images: [] }]);
+    setActiveEntryIdx(entries.length);
+  };
+
+  const removeTag = (idx: number) => {
+    if (entries.length <= 1) return;
+    setEntries(prev => {
+      const updated = [...prev];
+      updated.splice(idx, 1);
+      return updated;
+    });
+    if (activeEntryIdx >= idx && activeEntryIdx > 0) {
+      setActiveEntryIdx(activeEntryIdx - 1);
+    }
+  };
+
+  const startRenameTag = (idx: number) => {
+    setActiveEntryIdx(idx);
+    setTempTagName(entries[idx].tag || '');
+    setIsEditingTagName(true);
+  };
+
+  const confirmRenameTag = () => {
+    if (tempTagName.trim()) {
+      setEntries(prev => {
+        const updated = [...prev];
+        updated[activeEntryIdx] = { ...updated[activeEntryIdx], tag: tempTagName.trim() };
+        return updated;
+      });
+    }
+    setIsEditingTagName(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div 
+        onPaste={handlePaste}
+        className={cn(
+          "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
+          selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
+        )}
+      >
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-calendar-border)]">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-[var(--color-calendar-accent)]/20 rounded-lg">
+                <CalendarIcon size={20} className="text-[var(--color-calendar-accent)]" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">
+                  {selectedDay && format(selectedDay, 'yyyy年M月d日')}
+                </h2>
+                <p className="text-xs text-[var(--color-calendar-text-muted)]">
+                  {selectedPerson?.id === 1 ? '全员汇总视图 (只读)' : `${selectedPerson?.name} 的记录`}
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={handleClose}
+              className="p-2 hover:bg-[var(--color-calendar-surface-hover)] rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Tabs Bar */}
+          {selectedPerson?.id !== 1 && (
+            <div className="flex items-center px-6 py-2 bg-[var(--color-calendar-surface)] border-b border-[var(--color-calendar-border)] gap-2 overflow-x-auto no-scrollbar">
+              {entries.map((entry: any, idx: number) => (
+                <div key={idx} className="flex items-center group">
+                  <button
+                    onClick={() => {
+                      setActiveEntryIdx(idx);
+                      setIsEditingTagName(false);
+                    }}
+                    className={cn(
+                      "px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 whitespace-nowrap",
+                      activeEntryIdx === idx 
+                        ? "bg-[var(--color-calendar-accent)] text-white shadow-lg" 
+                        : "text-[var(--color-calendar-text-muted)] hover:text-[var(--color-calendar-text)] hover:bg-[var(--color-calendar-surface-hover)]"
+                    )}
+                  >
+                    {entry.tag || '无标签'}
+                    {activeEntryIdx === idx && !isEditingTagName && selectedPerson?.id !== 1 && (
+                      <Edit2 size={12} className="opacity-60 hover:opacity-100" onClick={(e) => { e.stopPropagation(); startRenameTag(idx); }} />
+                    )}
+                  </button>
+                  {entries.length > 1 && selectedPerson?.id !== 1 && (
+                    <button 
+                      onClick={() => removeTag(idx)}
+                      className="ml-1 p-1 text-[var(--color-calendar-text-dim)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {selectedPerson?.id !== 1 && (
+                <button 
+                  onClick={addTag}
+                  className="p-1.5 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/10 rounded-lg transition-colors ml-2"
+                  title="添加新标签"
+                >
+                  <Plus size={18} />
+                </button>
+              )}
+            </div>
+          )}
+
+          {selectedPerson?.id === 1 ? (
+            <div className="flex-1 overflow-y-auto p-6 bg-[var(--color-calendar-page-bg)]/50">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {selectedDay && getSummaryDataForDay(selectedDay).map(({ person, note }: any) => (
+                  <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-shadow">
+                    <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
+                        {person.name[0]}
+                      </div>
+                      <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
+                    </div>
+                    <div className="p-4 space-y-5 flex-1">
+                      {note.entries.map((entry: any, eIdx: number) => (
+                        <div key={eIdx} className="space-y-3 pb-4 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
+                          {entry.tag && (
+                            <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
+                              {entry.tag}
+                            </span>
+                          )}
+                          <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
+                            {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
+                          </p>
+                          {entry.images && entry.images.length > 0 && (
+                            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                              {entry.images.map((img: string, iIdx: number) => (
+                                <div key={iIdx} className="flex-shrink-0 w-28 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
+                                  <img 
+                                    src={img} 
+                                    alt="record" 
+                                    className="w-full h-full object-cover cursor-zoom-in" 
+                                    referrerPolicy="no-referrer" 
+                                    onClick={() => { setPreviewImage(img); setIsPreviewOpen(true); }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {selectedDay && getSummaryDataForDay(selectedDay).length === 0 && (
+                  <div className="col-span-full py-24 flex flex-col items-center justify-center text-[var(--color-calendar-text-dim)] gap-4">
+                    <div className="w-20 h-20 rounded-full bg-[var(--color-calendar-surface-hover)] flex items-center justify-center">
+                      <Users size={40} className="opacity-20" />
+                    </div>
+                    <p className="text-sm font-medium">该日期暂无任何人员记录</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {/* Tag Name Editor */}
+            {isEditingTagName && (
+              <div className="flex items-center gap-2 p-3 bg-[var(--color-calendar-accent)]/10 rounded-lg border border-[var(--color-calendar-accent)]/30">
+                <input 
+                  autoFocus
+                  value={tempTagName}
+                  onChange={(e) => setTempTagName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && confirmRenameTag()}
+                  className="bg-transparent border-none outline-none text-sm flex-1 font-medium"
+                  placeholder="输入标签名称..."
+                />
+                <button onClick={confirmRenameTag} className="p-1 hover:bg-[var(--color-calendar-accent)]/20 rounded text-[var(--color-calendar-accent)]"><Check size={16} /></button>
+                <button onClick={() => setIsEditingTagName(false)} className="p-1 hover:bg-red-500/20 rounded text-red-500"><X size={16} /></button>
+              </div>
+            )}
+
+            {/* Text Editor */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-wider">
+                <span className="text-[var(--color-calendar-accent)]">[{entries[activeEntryIdx]?.tag}]</span> 备注内容
+              </label>
+              <textarea 
+                value={localContent}
+                readOnly={selectedPerson?.id === 1}
+                onPaste={handlePaste}
+                onChange={(e) => {
+                  if (selectedPerson?.id === 1) return;
+                  handleContentChange(e.target.value);
+                }}
+                placeholder={selectedPerson?.id === 1 ? "汇总模式不可编辑" : "在此输入相关记录..."}
+                className={cn(
+                  "w-full h-32 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg p-4 text-sm focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors resize-none",
+                  selectedPerson?.id === 1 && "cursor-default opacity-80"
+                )}
+              />
+            </div>
+
+            {/* Multiple Image Upload */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-[var(--color-calendar-text-muted)] uppercase tracking-wider">截图/图片 ({(entries[activeEntryIdx]?.images || []).length})</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {entries[activeEntryIdx]?.images?.map((img: string, imgIdx: number) => (
+                      <div key={imgIdx} className="relative group aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] bg-[var(--color-calendar-page-bg)]">
+                        <img 
+                          src={img} 
+                          alt={`upload-${imgIdx}`} 
+                          className="w-full h-full object-cover cursor-zoom-in"
+                          referrerPolicy="no-referrer"
+                          onClick={() => { setPreviewImage(img); setIsPreviewOpen(true); }}
+                        />
+                        {selectedPerson?.id !== 1 && (
+                          <button 
+                            onClick={() => removeImage(imgIdx)}
+                            className="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {selectedPerson?.id !== 1 && (
+                      <label className="aspect-video border-2 border-dashed border-[var(--color-calendar-border)] hover:border-[var(--color-calendar-accent)]/50 hover:bg-[var(--color-calendar-accent)]/5 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group">
+                        <div className="p-2 bg-[var(--color-calendar-surface-hover)] rounded-full group-hover:bg-[var(--color-calendar-accent)]/20 transition-colors">
+                          <Plus size={20} className="text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-accent)]" />
+                        </div>
+                        <span className="text-[10px] text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-text)]">添加图片</span>
+                        <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
+                      </label>
+                    )}
+              </div>
+            </div>
+          </div>
+          )}
+
+          <div className="flex items-center justify-between px-6 py-4 bg-[var(--color-calendar-surface)] border-t border-[var(--color-calendar-border)]">
+            <button 
+              onClick={() => setIsConfirmDeleteOpen(true)}
+              disabled={isSubmitting || selectedPerson?.id === 1}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors text-sm",
+                selectedPerson?.id === 1 && "opacity-0 pointer-events-none"
+              )}
+            >
+              <Trash2 size={18} />
+              清空此日所有记录
+            </button>
+            <div className="flex gap-3">
+              <button 
+                onClick={onClose}
+                className="px-6 py-2 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-surface-hover)]/80 rounded-xl text-sm font-medium transition-colors"
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleClose}
+                className="px-6 py-2 bg-[var(--color-calendar-accent)] hover:opacity-90 rounded-xl text-sm font-bold text-white transition-all shadow-lg shadow-[var(--color-calendar-accent)]/20"
+              >
+                完成
+              </button>
+            </div>
+          </div>
+      </div>
+    </div>
+  );
+});
+
 export default function App() {
   const STORAGE_KEYS = {
     PEOPLE: 'calendar_people',
@@ -606,7 +1256,6 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [fullNotes, setFullNotes] = useState<Record<string, Note>>({});
   const [people, setPeople] = useState<Person[]>([]);
-  const [notes, setNotes] = useState<Record<string, Note>>({}); // Filtered notes for current person
 
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
@@ -616,6 +1265,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isPending, startTransition] = useTransition();
   const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -661,6 +1311,46 @@ export default function App() {
 
   // Check if running in Tauri
   const isTauri = !!(window as any).__TAURI__;
+  const isElectron = !!(window as any).electronAPI;
+  const isDesktop = isTauri || isElectron;
+
+  // 桌面端 API 抽象层
+  const desktopApi = useMemo(() => ({
+    isTauri,
+    isElectron,
+    isDesktop,
+    async selectDirectory() {
+      if (isTauri) return await dialog.open({ directory: true });
+      if (isElectron) return await (window as any).electronAPI.selectDirectory();
+      return null;
+    },
+    async writeTextFile(filePath: string, content: string) {
+      if (isTauri) return await fs.writeTextFile(filePath, content);
+      if (isElectron) return await (window as any).electronAPI.writeTextFile(filePath, content);
+    },
+    async readDir(dirPath: string) {
+      if (isTauri) return await fs.readDir(dirPath);
+      if (isElectron) return await (window as any).electronAPI.readDir(dirPath);
+      return [];
+    },
+    async removeFile(filePath: string) {
+      if (isTauri) return await fs.removeFile(filePath);
+      if (isElectron) return await (window as any).electronAPI.removeFile(filePath);
+    },
+    async createDir(dirPath: string, options?: any) {
+      if (isTauri) return await fs.createDir(dirPath, options);
+      if (isElectron) return await (window as any).electronAPI.createDir(dirPath);
+    },
+    async joinPath(...args: string[]) {
+      if (isTauri) return await path.join(...args);
+      if (isElectron) return await (window as any).electronAPI.joinPath(...args);
+      return args.join('/');
+    },
+    async close() {
+      if (isTauri) return await appWindow.close();
+      if (isElectron) return (window as any).electronAPI.backupComplete();
+    }
+  }), [isTauri, isElectron, isDesktop]);
 
   // --- Export/Import Logic ---
   const generateBackupData = async () => {
@@ -838,47 +1528,70 @@ export default function App() {
   };
 
   const runAutoBackup = async () => {
-    const bPath = backupPathRef.current;
+    // 优先从 ref 获取，如果为空则尝试从 localStorage 获取
+    let bPath = (backupPathRef.current || localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '').trim();
+    
     // 强制转换为数字，并设置合理的默认值
     const mBackups = Math.max(1, parseInt(String(maxBackupsRef.current || localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'), 10));
-    if (!isTauri || !bPath) return;
+    
+    if (!isDesktop || !bPath) {
+      console.log('Backup skipped: No path or not Desktop');
+      return;
+    }
+
+    console.log(`[Backup] Starting auto-backup to: ${bPath}`);
 
     try {
       const { jsonStr, htmlContent } = await generateBackupData();
       const now = new Date();
-      // 增加随机数后缀，彻底防止同秒冲突
-      const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const timestamp = `${format(now, 'yyyyMMdd_HHmmss')}_${randomSuffix}`;
+      // 使用更精确的时间戳，包含毫秒，彻底防止同秒冲突
+      const timestamp = format(now, 'yyyyMMdd_HHmmss_SSS');
       
       const jsonFileName = `auto_backup_${timestamp}.json`;
       const htmlFileName = `auto_backup_${timestamp}.html`;
       
-      const jsonFilePath = await path.join(bPath, jsonFileName);
-      const htmlFilePath = await path.join(bPath, htmlFileName);
+      const jsonFilePath = await desktopApi.joinPath(bPath, jsonFileName);
+      const htmlFilePath = await desktopApi.joinPath(bPath, htmlFileName);
       
-      await fs.writeTextFile(jsonFilePath, jsonStr);
-      await fs.writeTextFile(htmlFilePath, htmlContent);
-      
-      // 直接执行清理，不再使用 setTimeout，确保在关闭前完成
+      // 确保目录存在
       try {
-        const entries = await fs.readDir(bPath);
-        // 过滤出备份文件并按名称（时间戳）排序
-        const backupFiles = entries
-          .filter(e => e.name?.startsWith('auto_backup_'))
-          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        await desktopApi.createDir(bPath, { recursive: true });
+      } catch (e) {}
+
+      await desktopApi.writeTextFile(jsonFilePath, jsonStr);
+      await desktopApi.writeTextFile(htmlFilePath, htmlContent);
+      
+      console.log(`Backup files written: ${jsonFileName}`);
+
+      // 自动清理旧备份，保持指定数量的备份对（JSON + HTML）
+      try {
+        const entries = await desktopApi.readDir(bPath);
+        // 分别获取 JSON 和 HTML 备份文件
+        const jsonFiles = entries
+          .filter((e: any) => e.name?.startsWith('auto_backup_') && e.name?.endsWith('.json'))
+          .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
         
-        // 我们需要保留 mBackups 对文件（JSON + HTML）
-        const maxFiles = mBackups * 2;
-        if (backupFiles.length > maxFiles) {
-          const filesToDelete = backupFiles.slice(0, backupFiles.length - maxFiles);
-          for (const file of filesToDelete) {
-            if (file.path) {
-              await fs.removeFile(file.path);
-            }
+        const htmlFiles = entries
+          .filter((e: any) => e.name?.startsWith('auto_backup_') && e.name?.endsWith('.html'))
+          .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+
+        // 清理 JSON
+        if (jsonFiles.length > mBackups) {
+          const toDelete = jsonFiles.slice(0, jsonFiles.length - mBackups);
+          for (const file of toDelete) {
+            if (file.path) await desktopApi.removeFile(file.path);
+          }
+        }
+        
+        // 清理 HTML
+        if (htmlFiles.length > mBackups) {
+          const toDelete = htmlFiles.slice(0, htmlFiles.length - mBackups);
+          for (const file of toDelete) {
+            if (file.path) await desktopApi.removeFile(file.path);
           }
         }
       } catch (e) {
-        console.error('Cleanup failed:', e);
+        console.error('Backup cleanup failed:', e);
       }
     } catch (err) {
       console.error('Auto backup error:', err);
@@ -886,27 +1599,39 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!isTauri) return;
+    if (!isDesktop) return;
 
     const setupCloseListener = async () => {
-      const unlisten = await appWindow.onCloseRequested(async (event) => {
-        if (backupPathRef.current && !isClosingRef.current) {
-          event.preventDefault();
+      const handleClose = async (event?: any) => {
+        // 增加兜底逻辑：如果 ref 为空，尝试从 localStorage 获取路径
+        const bPath = backupPathRef.current || localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '';
+        
+        if (bPath && !isClosingRef.current) {
+          if (event && event.preventDefault) event.preventDefault();
           isClosingRef.current = true;
           setIsBackingUp(true); // Show backup UI
           
           try {
             // Give UI a chance to render the backing up state
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 150));
             await runAutoBackup();
+            // 额外等待一小会儿确保文件系统句柄释放
+            await new Promise(resolve => setTimeout(resolve, 100));
           } catch (e) {
             console.error('Backup failed during close:', e);
           } finally {
-            await appWindow.close();
+            await desktopApi.close();
           }
+        } else if (!bPath) {
+          await desktopApi.close();
         }
-      });
-      return unlisten;
+      };
+
+      if (isTauri) {
+        return await appWindow.onCloseRequested(handleClose);
+      } else if (isElectron) {
+        return (window as any).electronAPI.onCloseRequested(handleClose);
+      }
     };
 
     const unlistenPromise = setupCloseListener();
@@ -916,7 +1641,7 @@ export default function App() {
         if (typeof unlisten === 'function') unlisten();
       });
     };
-  }, []);
+  }, [isDesktop, isTauri, isElectron, desktopApi]);
 
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1008,32 +1733,6 @@ export default function App() {
   };
 
   // Modal Editing State
-  const [entries, setEntries] = useState<NoteEntry[]>([]);
-  const [localContent, setLocalContent] = useState('');
-  const [activeEntryIdx, setActiveEntryIdx] = useState(0);
-  const [isEditingTagName, setIsEditingTagName] = useState(false);
-  // Sync localContent when activeEntryIdx or entries change
-  useEffect(() => {
-    if (entries[activeEntryIdx]) {
-      setLocalContent(entries[activeEntryIdx].content || '');
-    }
-  }, [activeEntryIdx, entries.length, isModalOpen]);
-
-  const handleContentChange = (val: string) => {
-    setLocalContent(val);
-    if (contentTimeoutRef.current) clearTimeout(contentTimeoutRef.current);
-    
-    contentTimeoutRef.current = setTimeout(() => {
-      setEntries(prev => {
-        if (!prev[activeEntryIdx]) return prev;
-        const updated = [...prev];
-        updated[activeEntryIdx] = { ...updated[activeEntryIdx], content: val };
-        return updated;
-      });
-    }, 500);
-  };
-  const [tempTagName, setTempTagName] = useState('');
-  const contentTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
@@ -1155,7 +1854,25 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups]);
 
-  const getSummaryDataForDay = (day: Date) => {
+  const handleSaveNote = useCallback((updatedEntries: NoteEntry[]) => {
+    if (!selectedDay || !selectedPerson) return;
+    const dateKey = format(selectedDay, 'yyyy-MM-dd');
+    const noteKey = `${selectedPerson.id}_${dateKey}`;
+    
+    setFullNotes(prev => {
+      const updated = { ...prev };
+      updated[noteKey] = {
+        person_id: selectedPerson.id,
+        date: dateKey,
+        entries: updatedEntries
+      };
+      return updated;
+    });
+    
+    if (isTauri) syncFullDataToFile();
+  }, [selectedDay, selectedPerson, isTauri]);
+
+  const getSummaryDataForDay = useCallback((day: Date) => {
     if (!day) return [];
     const dateStr = format(day, 'yyyy-MM-dd');
     const allNotes = fullNotes;
@@ -1173,7 +1890,14 @@ export default function App() {
     });
     
     return summary;
-  };
+  }, [people, fullNotes]);
+
+  const initialEntries = useMemo(() => {
+    if (!selectedDay || !selectedPerson) return [];
+    const dateStr = format(selectedDay, 'yyyy-MM-dd');
+    const noteKey = `${selectedPerson.id}_${dateStr}`;
+    return fullNotes[noteKey]?.entries || [{ tag: '负责内容', content: '', images: [] }];
+  }, [selectedDay, selectedPerson, fullNotes]);
 
   // Fetch people and notes on mount
   useEffect(() => {
@@ -1249,9 +1973,8 @@ export default function App() {
     if (isTauri && !isLoading) syncFullDataToFile();
   }, [backupPath, maxBackups]);
 
-  // Sync notes when date or person changes
-  useEffect(() => {
-    if (!selectedPerson) return;
+  const notes = useMemo(() => {
+    if (!selectedPerson) return {};
     
     const notesMap: Record<string, Note> = {};
 
@@ -1277,7 +2000,7 @@ export default function App() {
       }
     });
     
-    setNotes(notesMap);
+    return notesMap;
   }, [fullNotes, people, selectedPerson]);
 
   // Close picker on outside click
@@ -1307,31 +2030,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isModalOpen, isSearchModalOpen, isAddPersonModalOpen, isSettingsOpen, isMonthSummaryOpen, isPickerOpen]);
 
-  // Auto-save notes when entries change
-  useEffect(() => {
-    if (!selectedDay || !selectedPerson || selectedPerson.id === 1) return;
-
-    const dateStr = format(selectedDay, 'yyyy-MM-dd');
-    const storageKey = `${selectedPerson.id}_${dateStr}`;
-    
-    // Only save if the entries belong to the current day and person
-    if (editingContextRef.current?.day !== dateStr || editingContextRef.current?.personId !== selectedPerson.id) {
-      return;
-    }
-
-    const newNote: Note = {
-      id: Date.now(),
-      person_id: selectedPerson.id,
-      date: dateStr,
-      entries: entries
-    };
-    
-    setFullNotes(prev => ({
-      ...prev,
-      [storageKey]: newNote
-    }));
-  }, [entries]);
-
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentDate);
     const monthEnd = endOfMonth(monthStart);
@@ -1341,168 +2039,33 @@ export default function App() {
     const days = eachDayOfInterval({ start: startDate, end: endDate });
 
     return days.map((day): CalendarDay => {
-      const dateStr = format(day, 'yyyy-MM-dd');
       return {
         date: day,
         isCurrentMonth: isSameMonth(day, monthStart),
-        isToday: isSameDay(day, new Date()),
-        note: notes[dateStr]
+        isToday: isSameDay(day, new Date())
       };
     });
-  }, [currentDate, notes]);
+  }, [currentDate]);
 
   const handlePrevMonth = () => setCurrentDate(subMonths(currentDate, 1));
   const handleNextMonth = () => setCurrentDate(addMonths(currentDate, 1));
   const handleToday = () => setCurrentDate(new Date());
 
   const openNoteModal = useCallback((day: Date, person?: Person) => {
-    const targetPerson = person || selectedPersonRef.current;
-    if (!targetPerson) return;
+    // 增加兜底逻辑：如果当前没有选中的人，默认使用第一个人
+    const targetPerson = person || selectedPersonRef.current || peopleRef.current[0];
+    if (!targetPerson) {
+      console.log('Cannot open modal: No person selected and no default person found');
+      return;
+    }
 
     const dateStr = format(day, 'yyyy-MM-dd');
-    const storageKey = `${targetPerson.id}_${dateStr}`;
-    const existingNote = fullNotesRef.current[storageKey];
     
     setSelectedDay(day);
     // Update the ref so the auto-save effect knows these entries belong to this day/person
     editingContextRef.current = { day: dateStr, personId: targetPerson.id };
-    
-    const currentSystemTags = systemTagsRef.current;
-    
-    if (existingNote && existingNote.entries && existingNote.entries.length > 0) {
-      let updatedEntries = [...existingNote.entries];
-      
-      // Ensure at least 3 entries for system tags without using while loop
-      if (updatedEntries.length < 3) {
-        const padding = Array.from({ length: 3 - updatedEntries.length }, () => ({ tag: '', content: '', images: [] }));
-        updatedEntries = [...updatedEntries, ...padding];
-      }
-      
-      // Update first 3 tags to match current system tags
-      const finalEntries = updatedEntries.map((entry, i) => {
-        if (i < 3) {
-          return { ...entry, tag: currentSystemTags[i] };
-        }
-        return entry;
-      });
-      
-      setEntries(finalEntries);
-    } else {
-      // Initialize with 3 default entries
-      setEntries(currentSystemTags.map(tag => ({ tag, content: '', images: [] })));
-    }
-    setActiveEntryIdx(0);
     setIsModalOpen(true);
   }, []); // Empty dependency array makes it perfectly stable
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const readers = Array.from(files).map((file: File) => {
-        return new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
-      });
-
-      Promise.all(readers).then(async newImages => {
-        const compressedImages = await Promise.all(newImages.map(img => compressImage(img)));
-        setEntries(prev => {
-          if (!prev[activeEntryIdx]) return prev;
-          const updated = [...prev];
-          updated[activeEntryIdx] = {
-            ...updated[activeEntryIdx],
-            images: [...updated[activeEntryIdx].images, ...compressedImages]
-          };
-          return updated;
-        });
-      });
-    }
-  };
-
-  const compressImage = (base64: string, maxWidth = 1000, maxHeight = 1000, quality = 0.7): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.src = base64;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > maxWidth) {
-            height *= maxWidth / width;
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxHeight) {
-            width *= maxHeight / height;
-            height = maxHeight;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } else {
-          resolve(base64);
-        }
-      };
-      img.onerror = () => resolve(base64);
-    });
-  };
-
-  const handlePaste = (e: React.ClipboardEvent) => {
-    if (selectedPerson?.id === 1) return;
-    const items = e.clipboardData.items;
-    const files: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        const file = items[i].getAsFile();
-        if (file) files.push(file);
-      }
-    }
-
-    if (files.length > 0) {
-      const readers = files.map((file: File) => {
-        return new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
-      });
-
-      Promise.all(readers).then(async newImages => {
-        // Compress images to save space and prevent crashes
-        const compressedImages = await Promise.all(newImages.map(img => compressImage(img)));
-        
-        setEntries(prev => {
-          if (!prev[activeEntryIdx]) return prev;
-          const updated = [...prev];
-          updated[activeEntryIdx] = {
-            ...updated[activeEntryIdx],
-            images: [...updated[activeEntryIdx].images, ...compressedImages]
-          };
-          return updated;
-        });
-      });
-    }
-  };
-
-  const removeImage = (imgIdx: number) => {
-    setEntries(prev => {
-      if (!prev[activeEntryIdx]) return prev;
-      const updated = [...prev];
-      const newImages = [...updated[activeEntryIdx].images];
-      newImages.splice(imgIdx, 1);
-      updated[activeEntryIdx] = { ...updated[activeEntryIdx], images: newImages };
-      return updated;
-    });
-  };
 
   const deleteNote = async () => {
     if (!selectedDay || !selectedPerson || isSubmitting) return;
@@ -1515,53 +2078,12 @@ export default function App() {
       delete allNotes[storageKey];
       saveLocalNotes(allNotes);
       
-      setNotes(prev => {
-        const updated = { ...prev };
-        delete updated[dateStr];
-        return updated;
-      });
       setIsModalOpen(false);
     } catch (error) {
       console.error('Failed to delete note:', error);
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const addTag = () => {
-    const newTag = '';
-    setEntries(prev => [...prev, { tag: newTag, content: '', images: [] }]);
-    setActiveEntryIdx(entries.length);
-  };
-
-  const removeTag = (idx: number) => {
-    if (entries.length <= 1) return;
-    setEntries(prev => prev.filter((_, i) => i !== idx));
-    if (activeEntryIdx >= idx) {
-      setActiveEntryIdx(Math.max(0, activeEntryIdx - 1));
-    }
-  };
-
-  const startRenameTag = () => {
-    if (!entries[activeEntryIdx]) return;
-    setTempTagName(entries[activeEntryIdx].tag);
-    setIsEditingTagName(true);
-  };
-
-  const confirmRenameTag = () => {
-    if (activeEntryIdx < 3) {
-      const newSystemTags = [...systemTags];
-      newSystemTags[activeEntryIdx] = tempTagName;
-      saveSystemTags(newSystemTags);
-    }
-    
-    setEntries(prev => {
-      if (!prev[activeEntryIdx]) return prev;
-      const updated = [...prev];
-      updated[activeEntryIdx] = { ...updated[activeEntryIdx], tag: tempTagName };
-      return updated;
-    });
-    setIsEditingTagName(false);
   };
 
   const handleAddPerson = async () => {
@@ -1625,7 +2147,7 @@ export default function App() {
     setContextMenu({ x: e.clientX, y: e.clientY, personId });
   };
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
     if (!query.trim()) {
       setSearchResults([]);
@@ -1633,20 +2155,17 @@ export default function App() {
     }
     setIsSearching(true);
     
-    // Local search implementation
-    setTimeout(() => {
-      const allNotes = fullNotes;
-      const currentPeople = people;
+    startTransition(() => {
       const results: any[] = [];
       const q = query.toLowerCase();
 
-      Object.entries(allNotes).forEach(([key, note]: [string, any]) => {
-        const person = currentPeople.find(p => p.id === note.person_id);
+      Object.entries(fullNotes).forEach(([key, note]: [string, any]) => {
+        const person = people.find(p => p.id === note.person_id);
         if (!person) return;
 
         const matchingEntries = note.entries.filter((entry: any) => 
-          entry.content.toLowerCase().includes(q) || 
-          entry.tag.toLowerCase().includes(q)
+          (entry.content && entry.content.toLowerCase().includes(q)) || 
+          (entry.tag && entry.tag.toLowerCase().includes(q))
         );
 
         matchingEntries.forEach((entry: any) => {
@@ -1661,151 +2180,37 @@ export default function App() {
 
       setSearchResults(results.sort((a, b) => b.date.localeCompare(a.date)));
       setIsSearching(false);
-    }, 100);
-  };
+    });
+  }, [fullNotes, people]);
 
   const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
   return (
     <div className="min-h-screen bg-[var(--color-calendar-page-bg)] text-[var(--color-calendar-text)] flex">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-[var(--color-calendar-border)] flex flex-col bg-[var(--color-calendar-sidebar-bg)]">
-        <div className="p-6 space-y-8">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">我的日历</h3>
-              <Plus size={14} className="text-[var(--color-calendar-text-dim)] cursor-pointer hover:text-white" onClick={() => setIsAddPersonModalOpen(true)} />
-            </div>
-            <div className="space-y-1">
-              {people.slice(0, 1).map(p => (
-                <div 
-                  key={p.id}
-                  onClick={() => setSelectedPerson(p)}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors",
-                    selectedPerson?.id === p.id ? "bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)]" : "hover:bg-[var(--color-calendar-surface-hover)]"
-                  )}
-                >
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: p.avatar_color }}>
-                    {p.name[0]}
-                  </div>
-                  <span className="text-sm font-medium">{p.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">当前人员</h3>
-              <Plus size={14} className="text-[var(--color-calendar-text-dim)] cursor-pointer hover:text-white" onClick={() => setIsAddPersonModalOpen(true)} />
-            </div>
-            <div className="space-y-1">
-              {people.slice(1).map(p => (
-                <div 
-                  key={p.id}
-                  onClick={() => setSelectedPerson(p)}
-                  onContextMenu={(e) => handleContextMenu(e, p.id)}
-                  className={cn(
-                    "flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors group",
-                    selectedPerson?.id === p.id ? "bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)]" : "hover:bg-[var(--color-calendar-surface-hover)]"
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: p.avatar_color }}>
-                      {p.name[0]}
-                    </div>
-                    <span className="text-sm font-medium">{p.name}</span>
-                  </div>
-                  {selectedPerson?.id === p.id && <CheckCircle2 size={14} className="text-[var(--color-calendar-accent)]" />}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-auto p-6 border-t border-[var(--color-calendar-border)]">
-          <button 
-            onClick={() => setIsSettingsOpen(true)}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-[var(--color-calendar-surface-hover)] w-full text-[var(--color-calendar-text-muted)] hover:text-white"
-          >
-            <Settings size={18} />
-            <span className="text-sm font-medium">设置</span>
-          </button>
-        </div>
-      </aside>
+      <Sidebar 
+        people={people}
+        selectedPerson={selectedPerson}
+        setSelectedPerson={setSelectedPerson}
+        setIsAddPersonModalOpen={setIsAddPersonModalOpen}
+        handleContextMenu={handleContextMenu}
+        setIsSettingsOpen={setIsSettingsOpen}
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-calendar-border)]">
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={handleToday}
-              className="px-4 py-1.5 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-surface-hover)]/80 rounded text-sm font-medium transition-colors"
-            >
-              今天
-            </button>
-            <div className="flex items-center gap-1">
-              <button onClick={handlePrevMonth} className="p-1 hover:bg-[var(--color-calendar-surface-hover)] rounded transition-colors">
-                <ChevronLeft size={20} />
-              </button>
-              <button onClick={handleNextMonth} className="p-1 hover:bg-[var(--color-calendar-surface-hover)] rounded transition-colors">
-                <ChevronRight size={20} />
-              </button>
-            </div>
-            <div className="relative" ref={pickerRef}>
-              <button 
-                onClick={() => setIsPickerOpen(!isPickerOpen)}
-                className="flex items-center gap-1 text-2xl font-semibold ml-2 hover:bg-[var(--color-calendar-surface-hover)] px-2 py-1 rounded transition-colors"
-              >
-                {format(currentDate, 'yyyy年M月')}
-                <ChevronDown size={20} className={cn("transition-transform", isPickerOpen && "rotate-180")} />
-              </button>
-              {selectedPerson?.id === 1 && (
-                <span className="absolute -top-1 -right-16 px-2 py-0.5 bg-[var(--color-calendar-accent)]/20 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded border border-[var(--color-calendar-accent)]/30 uppercase tracking-wider">
-                  汇总
-                </span>
-              )}
-                {isPickerOpen && (
-                  <YearMonthPicker 
-                    currentDate={currentDate} 
-                    onSelect={setCurrentDate} 
-                    onClose={() => setIsPickerOpen(false)} 
-                  />
-                )}
-              </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setIsMonthSummaryOpen(true)}
-              className="flex items-center gap-2 px-4 py-1.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/20 rounded-lg text-sm font-bold transition-all border border-[var(--color-calendar-accent)]/20 shadow-sm"
-            >
-              <FileText size={16} />
-              月总结
-            </button>
-            <div className="flex bg-[var(--color-calendar-surface-hover)] rounded p-1">
-              {['日', '周', '月', '列表'].map((view) => (
-                <button 
-                  key={view}
-                  className={cn(
-                    "px-4 py-1 rounded text-sm transition-colors",
-                    view === '月' ? "bg-[var(--color-calendar-surface-hover)] text-white" : "text-[var(--color-calendar-text-muted)] hover:text-white"
-                  )}
-                >
-                  {view}
-                </button>
-              ))}
-            </div>
-            <button 
-              onClick={() => setIsSearchModalOpen(true)}
-              className="p-2 hover:bg-[var(--color-calendar-surface-hover)] rounded transition-colors"
-            >
-              <Search size={20} className="text-[var(--color-calendar-text-muted)]" />
-            </button>
-          </div>
-        </header>
+        <Header 
+          currentDate={currentDate}
+          handleToday={handleToday}
+          handlePrevMonth={handlePrevMonth}
+          handleNextMonth={handleNextMonth}
+          isPickerOpen={isPickerOpen}
+          setIsPickerOpen={setIsPickerOpen}
+          pickerRef={pickerRef}
+          selectedPerson={selectedPerson}
+          setCurrentDate={setCurrentDate}
+          setIsMonthSummaryOpen={setIsMonthSummaryOpen}
+          setIsSearchModalOpen={setIsSearchModalOpen}
+        />
 
         {/* Weekday labels */}
         <div className="grid grid-cols-7 border-b border-[var(--color-calendar-border)]">
@@ -1817,252 +2222,32 @@ export default function App() {
         </div>
 
         {/* Calendar Grid */}
-        <main className="flex-1 overflow-auto">
-          <div className="grid grid-cols-7 h-full min-h-[600px]">
-            {calendarDays.map((day, idx) => (
-              <CalendarDayCell 
-                key={idx}
-                day={day}
-                note={day.note}
-                isSelected={selectedDay ? isSameDay(day.date, selectedDay) : false}
-                onClick={openNoteModal}
-                onContextMenu={(e) => {
-                  // You can add a context menu for days if needed
-                }}
-              />
-            ))}
-          </div>
-        </main>
+        <CalendarGrid 
+          calendarDays={calendarDays}
+          selectedDay={selectedDay}
+          notes={notes}
+          openNoteModal={openNoteModal}
+          onContextMenu={(e, date) => {
+            e.preventDefault();
+            openNoteModal(date);
+          }}
+        />
       </div>
 
       {/* Note Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div 
-            onPaste={handlePaste}
-            className={cn(
-              "bg-[var(--color-calendar-surface)] w-full rounded-xl border border-[var(--color-calendar-border)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]",
-              selectedPerson?.id === 1 ? "max-w-5xl" : "max-w-3xl"
-            )}
-          >
-              <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-calendar-border)]">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-[var(--color-calendar-accent)]/20 rounded-lg">
-                    <CalendarIcon size={20} className="text-[var(--color-calendar-accent)]" />
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-semibold">
-                      {selectedDay && format(selectedDay, 'yyyy年M月d日')}
-                    </h2>
-                    <p className="text-xs text-[var(--color-calendar-text-muted)]">
-                      {selectedPerson?.id === 1 ? '全员汇总视图 (只读)' : `${selectedPerson?.name} 的记录`}
-                    </p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setIsModalOpen(false)}
-                  className="p-2 hover:bg-[var(--color-calendar-surface-hover)] rounded-full transition-colors"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Tabs Bar */}
-              {selectedPerson?.id !== 1 && (
-                <div className="flex items-center px-6 py-2 bg-[var(--color-calendar-surface)] border-b border-[var(--color-calendar-border)] gap-2 overflow-x-auto no-scrollbar">
-                  {entries.map((entry, idx) => (
-                    <div key={idx} className="flex items-center group">
-                      <button
-                        onClick={() => {
-                          setActiveEntryIdx(idx);
-                          setIsEditingTagName(false);
-                        }}
-                        className={cn(
-                          "px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 whitespace-nowrap",
-                          activeEntryIdx === idx 
-                            ? "bg-[var(--color-calendar-accent)] text-white shadow-lg" 
-                            : "text-[var(--color-calendar-text-muted)] hover:text-[var(--color-calendar-text)] hover:bg-[var(--color-calendar-surface-hover)]"
-                        )}
-                      >
-                        {entry.tag || '无标签'}
-                        {activeEntryIdx === idx && !isEditingTagName && selectedPerson?.id !== 1 && (
-                          <Edit2 size={12} className="opacity-60 hover:opacity-100" onClick={(e) => { e.stopPropagation(); startRenameTag(); }} />
-                        )}
-                      </button>
-                      {entries.length > 1 && selectedPerson?.id !== 1 && (
-                        <button 
-                          onClick={() => removeTag(idx)}
-                          className="ml-1 p-1 text-[var(--color-calendar-text-dim)] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  {selectedPerson?.id !== 1 && (
-                    <button 
-                      onClick={addTag}
-                      className="p-1.5 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/10 rounded-lg transition-colors ml-2"
-                      title="添加新标签"
-                    >
-                      <Plus size={18} />
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {selectedPerson?.id === 1 ? (
-                <div className="flex-1 overflow-y-auto p-6 bg-[var(--color-calendar-page-bg)]/50">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {selectedDay && getSummaryDataForDay(selectedDay).map(({ person, note }) => (
-                      <div key={person.id} className="bg-[var(--color-calendar-surface)] rounded-xl border border-[var(--color-calendar-border)] overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-shadow">
-                        <div className="px-4 py-3 border-b border-[var(--color-calendar-border)] flex items-center gap-3 bg-[var(--color-calendar-surface-hover)]/30">
-                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner" style={{ backgroundColor: person.avatar_color }}>
-                            {person.name[0]}
-                          </div>
-                          <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
-                        </div>
-                        <div className="p-4 space-y-5 flex-1">
-                          {note.entries.map((entry, eIdx) => (
-                            <div key={eIdx} className="space-y-3 pb-4 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
-                              {entry.tag && (
-                                <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
-                                  {entry.tag}
-                                </span>
-                              )}
-                              <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
-                                {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
-                              </p>
-                              {entry.images && entry.images.length > 0 && (
-                                <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                                  {entry.images.map((img, iIdx) => (
-                                    <div key={iIdx} className="flex-shrink-0 w-28 aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] shadow-sm">
-                                      <img 
-                                        src={img} 
-                                        alt="record" 
-                                        className="w-full h-full object-cover cursor-zoom-in" 
-                                        referrerPolicy="no-referrer" 
-                                        onClick={() => { setPreviewImage(img); setIsPreviewOpen(true); }}
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    {selectedDay && getSummaryDataForDay(selectedDay).length === 0 && (
-                      <div className="col-span-full py-24 flex flex-col items-center justify-center text-[var(--color-calendar-text-dim)] gap-4">
-                        <div className="w-20 h-20 rounded-full bg-[var(--color-calendar-surface-hover)] flex items-center justify-center">
-                          <Users size={40} className="opacity-20" />
-                        </div>
-                        <p className="text-sm font-medium">该日期暂无任何人员记录</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {/* Tag Name Editor */}
-                {isEditingTagName && (
-                  <div className="flex items-center gap-2 p-3 bg-[var(--color-calendar-accent)]/10 rounded-lg border border-[var(--color-calendar-accent)]/30">
-                    <input 
-                      autoFocus
-                      value={tempTagName}
-                      onChange={(e) => setTempTagName(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && confirmRenameTag()}
-                      className="bg-transparent border-none outline-none text-sm flex-1 font-medium"
-                      placeholder="输入标签名称..."
-                    />
-                    <button onClick={confirmRenameTag} className="p-1 hover:bg-[var(--color-calendar-accent)]/20 rounded text-[var(--color-calendar-accent)]"><Check size={16} /></button>
-                    <button onClick={() => setIsEditingTagName(false)} className="p-1 hover:bg-red-500/20 rounded text-red-500"><X size={16} /></button>
-                  </div>
-                )}
-
-                {/* Text Editor */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-wider">
-                    <span className="text-[var(--color-calendar-accent)]">[{entries[activeEntryIdx]?.tag}]</span> 备注内容
-                  </label>
-                  <textarea 
-                    value={localContent}
-                    readOnly={selectedPerson?.id === 1}
-                    onPaste={handlePaste}
-                    onChange={(e) => {
-                      if (selectedPerson?.id === 1) return;
-                      handleContentChange(e.target.value);
-                    }}
-                    placeholder={selectedPerson?.id === 1 ? "汇总模式不可编辑" : "在此输入相关记录..."}
-                    className={cn(
-                      "w-full h-32 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg p-4 text-sm focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors resize-none",
-                      selectedPerson?.id === 1 && "cursor-default opacity-80"
-                    )}
-                  />
-                </div>
-
-                {/* Multiple Image Upload */}
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-[var(--color-calendar-text-muted)] uppercase tracking-wider">截图/图片 ({(entries[activeEntryIdx]?.images || []).length})</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                        {entries[activeEntryIdx]?.images?.map((img, imgIdx) => (
-                          <div key={imgIdx} className="relative group aspect-video rounded-lg overflow-hidden border border-[var(--color-calendar-border)] bg-[var(--color-calendar-page-bg)]">
-                            <img 
-                              src={img} 
-                              alt={`upload-${imgIdx}`} 
-                              className="w-full h-full object-cover cursor-zoom-in"
-                              referrerPolicy="no-referrer"
-                              onClick={() => { setPreviewImage(img); setIsPreviewOpen(true); }}
-                            />
-                            {selectedPerson?.id !== 1 && (
-                              <button 
-                                onClick={() => removeImage(imgIdx)}
-                                className="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
-                              >
-                                <X size={14} />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                        {selectedPerson?.id !== 1 && (
-                          <label className="aspect-video border-2 border-dashed border-[var(--color-calendar-border)] hover:border-[var(--color-calendar-accent)]/50 hover:bg-[var(--color-calendar-accent)]/5 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer transition-all group">
-                            <div className="p-2 bg-[var(--color-calendar-surface-hover)] rounded-full group-hover:bg-[var(--color-calendar-accent)]/20 transition-colors">
-                              <Plus size={20} className="text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-accent)]" />
-                            </div>
-                            <span className="text-[10px] text-[var(--color-calendar-text-muted)] group-hover:text-[var(--color-calendar-text)]">添加图片</span>
-                            <input type="file" multiple accept="image/*" className="hidden" onChange={handleImageUpload} />
-                          </label>
-                        )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-              <div className="flex items-center justify-between px-6 py-4 bg-[var(--color-calendar-surface)] border-t border-[var(--color-calendar-border)]">
-                <button 
-                  onClick={() => setIsConfirmDeleteOpen(true)}
-                  disabled={isSubmitting || selectedPerson?.id === 1}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors text-sm",
-                    selectedPerson?.id === 1 && "opacity-0 pointer-events-none"
-                  )}
-                >
-                  <Trash2 size={18} />
-                  清空此日所有记录
-                </button>
-                <div className="flex gap-3">
-                  <button 
-                    onClick={() => setIsModalOpen(false)}
-                    className="px-8 py-2 text-sm font-medium bg-[var(--color-calendar-accent)] text-white hover:opacity-90 rounded-lg transition-all shadow-lg"
-                  >
-                    关闭
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+      <NoteModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        selectedDay={selectedDay}
+        selectedPerson={selectedPerson}
+        initialEntries={initialEntries}
+        onSave={handleSaveNote}
+        getSummaryDataForDay={getSummaryDataForDay}
+        setPreviewImage={setPreviewImage}
+        setIsPreviewOpen={setIsPreviewOpen}
+        isSubmitting={isSubmitting}
+        setIsConfirmDeleteOpen={setIsConfirmDeleteOpen}
+      />
 
       {/* Context Menu */}
       {contextMenu && (
@@ -2431,7 +2616,7 @@ export default function App() {
                     </p>
                   </div>
 
-                  {isTauri && (
+                  {isDesktop && (
                     <div className="space-y-4 pt-4 border-t border-[var(--color-calendar-border)]">
                       <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">自动备份 (仅限桌面端)</label>
                       <div className="space-y-4">
@@ -2446,7 +2631,7 @@ export default function App() {
                             <button 
                               onClick={async () => {
                                 try {
-                                  const selected = await dialog.open({ directory: true });
+                                  const selected = await desktopApi.selectDirectory();
                                   if (selected && typeof selected === 'string') {
                                     setBackupPath(selected);
                                     localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, selected);
@@ -2458,6 +2643,21 @@ export default function App() {
                               className="px-3 py-2 bg-[var(--color-calendar-surface-hover)] border border-[var(--color-calendar-border)] rounded-lg text-xs hover:bg-[var(--color-calendar-accent)]/10 hover:text-[var(--color-calendar-accent)] transition-colors"
                             >
                               选择
+                            </button>
+                            <button 
+                              onClick={async () => {
+                                if (!backupPath) {
+                                  alert('请先选择备份路径');
+                                  return;
+                                }
+                                setIsBackingUp(true);
+                                await runAutoBackup();
+                                setIsBackingUp(false);
+                                alert('备份完成！');
+                              }}
+                              className="px-3 py-2 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] border border-[var(--color-calendar-accent)]/30 rounded-lg text-xs hover:bg-[var(--color-calendar-accent)]/20 transition-colors"
+                            >
+                              立即备份
                             </button>
                           </div>
                         </div>
