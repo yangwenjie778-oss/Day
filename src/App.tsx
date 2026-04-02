@@ -99,9 +99,10 @@ interface ContextMenuProps {
   onClose: () => void;
   onDelete: () => void;
   onAdd: () => void;
+  onRename: () => void;
 }
 
-function ContextMenu({ x, y, onClose, onDelete, onAdd }: ContextMenuProps) {
+function ContextMenu({ x, y, onClose, onDelete, onAdd, onRename }: ContextMenuProps) {
   useEffect(() => {
     const handleClick = () => onClose();
     window.addEventListener('click', handleClick);
@@ -119,6 +120,12 @@ function ContextMenu({ x, y, onClose, onDelete, onAdd }: ContextMenuProps) {
         className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-calendar-surface-hover)] flex items-center gap-2"
       >
         <Plus size={14} /> 新增人员
+      </button>
+      <button 
+        onClick={() => { onRename(); onClose(); }}
+        className="w-full text-left px-4 py-2 text-sm hover:bg-[var(--color-calendar-surface-hover)] flex items-center gap-2"
+      >
+        <Edit2 size={14} /> 重命名
       </button>
       <button 
         onClick={() => { onDelete(); onClose(); }}
@@ -209,7 +216,9 @@ const Sidebar = memo(({
   setSelectedPerson, 
   setIsAddPersonModalOpen, 
   handleContextMenu, 
-  setIsSettingsOpen 
+  setIsSettingsOpen,
+  onQuickBackup,
+  backupPath
 }: any) => {
   return (
     <aside className="w-64 border-r border-[var(--color-calendar-border)] flex flex-col bg-[var(--color-calendar-sidebar-bg)]">
@@ -267,7 +276,20 @@ const Sidebar = memo(({
         </div>
       </div>
 
-      <div className="mt-auto p-6 border-t border-[var(--color-calendar-border)]">
+      <div className="mt-auto p-6 border-t border-[var(--color-calendar-border)] space-y-2">
+        <button 
+          onClick={onQuickBackup}
+          title={backupPath ? `自动备份到: ${backupPath}` : "请先在设置中配置备份路径"}
+          className={cn(
+            "flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors w-full text-sm font-medium",
+            backupPath 
+              ? "bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] hover:bg-[var(--color-calendar-accent)]/20" 
+              : "text-[var(--color-calendar-text-dim)] hover:bg-[var(--color-calendar-surface-hover)]"
+          )}
+        >
+          <Save size={18} />
+          <span>一键备份</span>
+        </button>
         <button 
           onClick={() => setIsSettingsOpen(true)}
           className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-[var(--color-calendar-surface-hover)] w-full text-[var(--color-calendar-text-muted)] hover:text-white"
@@ -1736,6 +1758,9 @@ export default function App() {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isRenamePersonModalOpen, setIsRenamePersonModalOpen] = useState(false);
+  const [personToRename, setPersonToRename] = useState<Person | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, personId: number } | null>(null);
@@ -1896,8 +1921,8 @@ export default function App() {
     if (!selectedDay || !selectedPerson) return [];
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
     const noteKey = `${selectedPerson.id}_${dateStr}`;
-    return fullNotes[noteKey]?.entries || [{ tag: '负责内容', content: '', images: [] }];
-  }, [selectedDay, selectedPerson, fullNotes]);
+    return fullNotes[noteKey]?.entries || systemTags.map(tag => ({ tag, content: '', images: [] }));
+  }, [selectedDay, selectedPerson, fullNotes, systemTags]);
 
   // Fetch people and notes on mount
   useEffect(() => {
@@ -2086,6 +2111,45 @@ export default function App() {
     }
   };
 
+  const handleQuickBackup = async () => {
+    if (!backupPath) {
+      alert('请先在设置中配置备份路径');
+      setIsSettingsOpen(true);
+      return;
+    }
+    setIsBackingUp(true);
+    try {
+      await runAutoBackup();
+      alert('备份成功！已保存至: ' + backupPath);
+    } catch (e) {
+      alert('备份失败: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleRenamePerson = async () => {
+    if (!personToRename || !renameValue.trim() || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const updatedPeople = people.map(p => 
+        p.id === personToRename.id ? { ...p, name: renameValue.trim() } : p
+      );
+      saveLocalPeople(updatedPeople);
+      if (selectedPerson?.id === personToRename.id) {
+        setSelectedPerson({ ...personToRename, name: renameValue.trim() });
+      }
+      setIsRenamePersonModalOpen(false);
+      setPersonToRename(null);
+      setRenameValue('');
+    } catch (error) {
+      console.error('Failed to rename person:', error);
+      alert('重命名失败');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleAddPerson = async () => {
     if (!newPersonName.trim() || isSubmitting) return;
     setIsSubmitting(true);
@@ -2194,6 +2258,8 @@ export default function App() {
         setIsAddPersonModalOpen={setIsAddPersonModalOpen}
         handleContextMenu={handleContextMenu}
         setIsSettingsOpen={setIsSettingsOpen}
+        onQuickBackup={handleQuickBackup}
+        backupPath={backupPath}
       />
 
       {/* Main Content */}
@@ -2256,8 +2322,62 @@ export default function App() {
           y={contextMenu.y} 
           onClose={() => setContextMenu(null)}
           onAdd={() => setIsAddPersonModalOpen(true)}
+          onRename={() => {
+            const person = people.find(p => p.id === contextMenu.personId);
+            if (person) {
+              setPersonToRename(person);
+              setRenameValue(person.name);
+              setIsRenamePersonModalOpen(true);
+            }
+          }}
           onDelete={() => handleDeletePerson(contextMenu.personId)}
         />
+      )}
+
+      {/* Rename Person Modal */}
+      {isRenamePersonModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-[var(--color-calendar-surface)] w-full max-w-sm rounded-xl border border-[var(--color-calendar-border)] shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Edit2 size={20} className="text-[var(--color-calendar-accent)]" />
+                重命名人员
+              </h2>
+              <button onClick={() => setIsRenamePersonModalOpen(false)} className="text-[var(--color-calendar-text-dim)] hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-[var(--color-calendar-text-muted)] uppercase font-bold">人员姓名</label>
+              <input 
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleRenamePerson()}
+                placeholder="请输入新姓名..."
+                className="w-full bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors"
+              />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button 
+                onClick={() => setIsRenamePersonModalOpen(false)}
+                className="flex-1 py-2 text-sm font-medium bg-[var(--color-calendar-surface-hover)] hover:opacity-80 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleRenamePerson}
+                disabled={isSubmitting || !renameValue.trim()}
+                className={cn(
+                  "flex-1 py-2 text-sm font-medium bg-[var(--color-calendar-accent)] hover:opacity-90 text-white rounded-lg transition-colors shadow-lg",
+                  (isSubmitting || !renameValue.trim()) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                {isSubmitting ? '保存中...' : '确定修改'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Add Person Modal */}
