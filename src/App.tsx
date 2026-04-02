@@ -1258,6 +1258,45 @@ export default function App() {
     MAX_BACKUPS: 'calendar_max_backups',
   };
 
+  const getSystemTags = (): string[] => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.SYSTEM_TAGS);
+      if (!stored) {
+        const defaultTags = ['负责内容', '不足', '优秀'];
+        localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(defaultTags));
+        return defaultTags;
+      }
+      return JSON.parse(stored);
+    } catch (e) {
+      return ['负责内容', '不足', '优秀'];
+    }
+  };
+
+  const getLocalPeople = (): Person[] => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.PEOPLE);
+      if (!stored) {
+        const defaultPeople = [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
+        localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(defaultPeople));
+        return defaultPeople;
+      }
+      return JSON.parse(stored);
+    } catch (e) {
+      console.error("Failed to parse people from localStorage", e);
+      return [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
+    }
+  };
+
+  const getLocalNotes = (): Record<string, Note> => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEYS.NOTES);
+      return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+      console.error("Failed to parse notes from localStorage", e);
+      return {};
+    }
+  };
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [fullNotes, setFullNotes] = useState<Record<string, Note>>({});
   const [people, setPeople] = useState<Person[]>([]);
@@ -1281,12 +1320,14 @@ export default function App() {
   const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
   const [maxBackups, setMaxBackups] = useState<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
 
-  const fullNotesRef = useRef<Record<string, Note>>({});
-  const peopleRef = useRef<Person[]>([]);
+  const fullNotesRef = useRef<Record<string, Note>>(getLocalNotes());
+  const peopleRef = useRef<Person[]>(getLocalPeople());
   const selectedPersonRef = useRef<Person | null>(null);
-  const systemTagsRef = useRef<string[]>([]);
-  const backupPathRef = useRef<string>('');
-  const maxBackupsRef = useRef<number>(10);
+  const systemTagsRef = useRef<string[]>(getSystemTags());
+  const backupPathRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
+  const maxBackupsRef = useRef<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
+  const themeColorRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6');
+  const themeModeRef = useRef<'dark' | 'light'>((localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark');
 
   useEffect(() => {
     fullNotesRef.current = fullNotes;
@@ -1307,6 +1348,14 @@ export default function App() {
   useEffect(() => {
     maxBackupsRef.current = maxBackups;
   }, [maxBackups]);
+  useEffect(() => {
+    themeColorRef.current = themeColor;
+  }, [themeColor]);
+
+  useEffect(() => {
+    themeModeRef.current = themeMode;
+  }, [themeMode]);
+
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImportConfirmOpen, setIsImportConfirmOpen] = useState(false);
   const [importData, setImportData] = useState<{ people: Person[], notes: Record<string, Note>, theme?: string, themeMode?: string } | null>(null);
@@ -1536,9 +1585,14 @@ export default function App() {
     // 优先从 ref 获取，如果为空则尝试从 localStorage 获取
     let bPath = (backupPathRef.current || localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '').trim();
     
-    if (!isDesktop || !bPath) {
-      console.log('Backup skipped: No path or not Desktop');
+    if (!isDesktop) {
+      console.log('Backup skipped: Not Desktop');
       return;
+    }
+
+    if (!bPath) {
+      console.log('Backup skipped: No path configured');
+      throw new Error('未配置备份路径，请在设置中重新选择');
     }
 
     console.log(`[Backup] Starting backup to: ${bPath}`);
@@ -1697,20 +1751,6 @@ export default function App() {
   const pickerRef = useRef<HTMLDivElement>(null);
   const editingContextRef = useRef<{ day: string; personId: number } | null>(null);
 
-  const getSystemTags = (): string[] => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SYSTEM_TAGS);
-      if (!stored) {
-        const defaultTags = ['负责内容', '不足', '优秀'];
-        localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(defaultTags));
-        return defaultTags;
-      }
-      return JSON.parse(stored);
-    } catch (e) {
-      return ['负责内容', '不足', '优秀'];
-    }
-  };
-
   const [systemTags, setSystemTags] = useState<string[]>(getSystemTags());
 
   useEffect(() => {
@@ -1721,31 +1761,6 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tags));
     setSystemTags(tags);
     if (isTauri) syncFullDataToFile();
-  };
-
-  const getLocalPeople = (): Person[] => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.PEOPLE);
-      if (!stored) {
-        const defaultPeople = [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
-        localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(defaultPeople));
-        return defaultPeople;
-      }
-      return JSON.parse(stored);
-    } catch (e) {
-      console.error("Failed to parse people from localStorage", e);
-      return [{ id: 1, name: '我的日历', avatar_color: '#3b82f6' }];
-    }
-  };
-
-  const getLocalNotes = (): Record<string, Note> => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.NOTES);
-      return stored ? JSON.parse(stored) : {};
-    } catch (e) {
-      console.error("Failed to parse notes from localStorage", e);
-      return {};
-    }
   };
 
   const saveLocalPeople = (newPeople: Person[]) => {
@@ -1762,9 +1777,9 @@ export default function App() {
       const fullData = {
         people: peopleRef.current,
         notes: fullNotesRef.current,
-        systemTags: systemTags,
-        theme: themeColor,
-        themeMode: themeMode,
+        systemTags: systemTagsRef.current,
+        theme: themeColorRef.current,
+        themeMode: themeModeRef.current,
         backupPath: backupPathRef.current,
         maxBackups: maxBackupsRef.current
       };
@@ -1895,15 +1910,21 @@ export default function App() {
       }
 
       setPeople(peopleData);
+      peopleRef.current = peopleData;
       if (peopleData.length > 0) {
         setSelectedPerson(peopleData[0]);
+        selectedPersonRef.current = peopleData[0];
       }
       setFullNotes(notesData);
+      fullNotesRef.current = notesData;
       setSystemTags(tagsData);
+      systemTagsRef.current = tagsData;
       setThemeColor(theme);
       setThemeMode(mode);
       setBackupPath(bPath);
+      backupPathRef.current = bPath;
       setMaxBackups(mBackups);
+      maxBackupsRef.current = mBackups;
       setIsLoading(false);
     };
 
