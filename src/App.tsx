@@ -1806,7 +1806,7 @@ export default function App() {
     }, 2000); // Increase debounce to 2 seconds for better performance
 
     return () => clearTimeout(timer);
-  }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups]);
+  }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups, isLoading, isTauri]);
 
   const handleSaveNote = useCallback((updatedEntries: NoteEntry[]) => {
     if (!selectedDay || !selectedPerson) return;
@@ -1915,17 +1915,17 @@ export default function App() {
     document.documentElement.style.setProperty('--calendar-accent', themeColor);
     localStorage.setItem(STORAGE_KEYS.THEME, themeColor);
     if (isTauri && !isLoading) syncFullDataToFile();
-  }, [themeColor]);
+  }, [themeColor, isLoading, isTauri]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', themeMode);
     localStorage.setItem(STORAGE_KEYS.THEME_MODE, themeMode);
     if (isTauri && !isLoading) syncFullDataToFile();
-  }, [themeMode]);
+  }, [themeMode, isLoading, isTauri]);
 
   useEffect(() => {
     if (isTauri && !isLoading) syncFullDataToFile();
-  }, [backupPath, maxBackups]);
+  }, [backupPath, maxBackups, isLoading, isTauri]);
 
   const notes = useMemo(() => {
     if (!selectedPerson) return {};
@@ -2684,6 +2684,11 @@ export default function App() {
                                   if (selected && typeof selected === 'string') {
                                     setBackupPath(selected);
                                     localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, selected);
+                                    // 立即同步到持久化文件，确保重启后依然有效
+                                    if (isTauri) {
+                                      backupPathRef.current = selected;
+                                      syncFullDataToFile();
+                                    }
                                   }
                                 } catch (err) {
                                   console.error('Pick directory error:', err);
@@ -2721,6 +2726,11 @@ export default function App() {
                               const val = parseInt(e.target.value) || 1;
                               setMaxBackups(val);
                               localStorage.setItem(STORAGE_KEYS.MAX_BACKUPS, val.toString());
+                              // 立即同步到持久化文件
+                              if (isTauri) {
+                                maxBackupsRef.current = val;
+                                syncFullDataToFile();
+                              }
                             }}
                             className="w-full bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[var(--color-calendar-accent)]"
                           />
