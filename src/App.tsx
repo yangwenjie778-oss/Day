@@ -1116,7 +1116,7 @@ const NoteModal = React.memo(({
                       <span className="font-bold text-sm text-[var(--color-calendar-text)]">{person.name}</span>
                     </div>
                     <div className="p-4 space-y-5 flex-1">
-                      {note.entries.map((entry: any, eIdx: number) => (
+                      {note.entries.filter((e: any) => (e.content && e.content.trim()) || (e.images && e.images.length > 0)).map((entry: any, eIdx: number) => (
                         <div key={eIdx} className="space-y-3 pb-4 last:pb-0 border-b last:border-0 border-[var(--color-calendar-border)]/50">
                           {entry.tag && (
                             <span className="inline-block px-2 py-0.5 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] text-[10px] font-bold rounded uppercase tracking-wider">
@@ -1124,7 +1124,7 @@ const NoteModal = React.memo(({
                             </span>
                           )}
                           <p className="text-sm text-[var(--color-calendar-text)] whitespace-pre-wrap leading-relaxed">
-                            {entry.content || <span className="text-[var(--color-calendar-text-dim)] italic">无文字内容</span>}
+                            {entry.content}
                           </p>
                           {entry.images && entry.images.length > 0 && (
                             <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
@@ -1232,30 +1232,13 @@ const NoteModal = React.memo(({
           </div>
           )}
 
-          <div className="flex items-center justify-between px-6 py-4 bg-[var(--color-calendar-surface)] border-t border-[var(--color-calendar-border)]">
-            <button 
-              onClick={() => setIsConfirmDeleteOpen(true)}
-              disabled={isSubmitting || selectedPerson?.id === 1}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-500/10 rounded-lg transition-colors text-sm",
-                selectedPerson?.id === 1 && "opacity-0 pointer-events-none"
-              )}
-            >
-              <Trash2 size={18} />
-              清空此日所有记录
-            </button>
+          <div className="flex items-center justify-end px-6 py-4 bg-[var(--color-calendar-surface)] border-t border-[var(--color-calendar-border)]">
             <div className="flex gap-3">
               <button 
-                onClick={onClose}
-                className="px-6 py-2 bg-[var(--color-calendar-surface-hover)] hover:bg-[var(--color-calendar-surface-hover)]/80 rounded-xl text-sm font-medium transition-colors"
-              >
-                取消
-              </button>
-              <button 
                 onClick={handleClose}
-                className="px-6 py-2 bg-[var(--color-calendar-accent)] hover:opacity-90 rounded-xl text-sm font-bold text-white transition-all shadow-lg shadow-[var(--color-calendar-accent)]/20"
+                className="px-8 py-2 bg-[var(--color-calendar-accent)] hover:opacity-90 rounded-xl text-sm font-bold text-white transition-all shadow-lg shadow-[var(--color-calendar-accent)]/20"
               >
-                完成
+                关闭并自动保存
               </button>
             </div>
           </div>
@@ -1553,15 +1536,12 @@ export default function App() {
     // 优先从 ref 获取，如果为空则尝试从 localStorage 获取
     let bPath = (backupPathRef.current || localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '').trim();
     
-    // 强制转换为数字，并设置合理的默认值
-    const mBackups = Math.max(1, parseInt(String(maxBackupsRef.current || localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'), 10));
-    
     if (!isDesktop || !bPath) {
       console.log('Backup skipped: No path or not Desktop');
       return;
     }
 
-    console.log(`[Backup] Starting auto-backup to: ${bPath}`);
+    console.log(`[Backup] Starting backup to: ${bPath}`);
 
     try {
       const { jsonStr, htmlContent } = await generateBackupData();
@@ -1569,8 +1549,8 @@ export default function App() {
       // 使用更精确的时间戳，包含毫秒，彻底防止同秒冲突
       const timestamp = format(now, 'yyyyMMdd_HHmmss_SSS');
       
-      const jsonFileName = `auto_backup_${timestamp}.json`;
-      const htmlFileName = `auto_backup_${timestamp}.html`;
+      const jsonFileName = `backup_${timestamp}.json`;
+      const htmlFileName = `backup_${timestamp}.html`;
       
       const jsonFilePath = await desktopApi.joinPath(bPath, jsonFileName);
       const htmlFilePath = await desktopApi.joinPath(bPath, htmlFileName);
@@ -1584,39 +1564,8 @@ export default function App() {
       await desktopApi.writeTextFile(htmlFilePath, htmlContent);
       
       console.log(`Backup files written: ${jsonFileName}`);
-
-      // 自动清理旧备份，保持指定数量的备份对（JSON + HTML）
-      try {
-        const entries = await desktopApi.readDir(bPath);
-        // 分别获取 JSON 和 HTML 备份文件
-        const jsonFiles = entries
-          .filter((e: any) => e.name?.startsWith('auto_backup_') && e.name?.endsWith('.json'))
-          .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
-        
-        const htmlFiles = entries
-          .filter((e: any) => e.name?.startsWith('auto_backup_') && e.name?.endsWith('.html'))
-          .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
-
-        // 清理 JSON
-        if (jsonFiles.length > mBackups) {
-          const toDelete = jsonFiles.slice(0, jsonFiles.length - mBackups);
-          for (const file of toDelete) {
-            if (file.path) await desktopApi.removeFile(file.path);
-          }
-        }
-        
-        // 清理 HTML
-        if (htmlFiles.length > mBackups) {
-          const toDelete = htmlFiles.slice(0, htmlFiles.length - mBackups);
-          for (const file of toDelete) {
-            if (file.path) await desktopApi.removeFile(file.path);
-          }
-        }
-      } catch (e) {
-        console.error('Backup cleanup failed:', e);
-      }
     } catch (err) {
-      console.error('Auto backup error:', err);
+      console.error('Backup error:', err);
     }
   };
 
@@ -1625,28 +1574,8 @@ export default function App() {
 
     const setupCloseListener = async () => {
       const handleClose = async (event?: any) => {
-        // 增加兜底逻辑：如果 ref 为空，尝试从 localStorage 获取路径
-        const bPath = backupPathRef.current || localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '';
-        
-        if (bPath && !isClosingRef.current) {
-          if (event && event.preventDefault) event.preventDefault();
-          isClosingRef.current = true;
-          setIsBackingUp(true); // Show backup UI
-          
-          try {
-            // Give UI a chance to render the backing up state
-            await new Promise(resolve => setTimeout(resolve, 150));
-            await runAutoBackup();
-            // 额外等待一小会儿确保文件系统句柄释放
-            await new Promise(resolve => setTimeout(resolve, 100));
-          } catch (e) {
-            console.error('Backup failed during close:', e);
-          } finally {
-            await desktopApi.close();
-          }
-        } else if (!bPath) {
-          await desktopApi.close();
-        }
+        // 移除自动备份，直接退出
+        await desktopApi.close();
       };
 
       if (isTauri) {
@@ -2072,9 +2001,9 @@ export default function App() {
     });
   }, [currentDate]);
 
-  const handlePrevMonth = () => setCurrentDate(subMonths(currentDate, 1));
-  const handleNextMonth = () => setCurrentDate(addMonths(currentDate, 1));
-  const handleToday = () => setCurrentDate(new Date());
+  const handlePrevMonth = useCallback(() => setCurrentDate(subMonths(currentDate, 1)), [currentDate]);
+  const handleNextMonth = useCallback(() => setCurrentDate(addMonths(currentDate, 1)), [currentDate]);
+  const handleToday = useCallback(() => setCurrentDate(new Date()), []);
 
   const openNoteModal = useCallback((day: Date, person?: Person) => {
     // 增加兜底逻辑：如果当前没有选中的人，默认使用第一个人
@@ -2111,7 +2040,7 @@ export default function App() {
     }
   };
 
-  const handleQuickBackup = async () => {
+  const handleQuickBackup = useCallback(async () => {
     if (!backupPath) {
       alert('请先在设置中配置备份路径');
       setIsSettingsOpen(true);
@@ -2126,7 +2055,7 @@ export default function App() {
     } finally {
       setIsBackingUp(false);
     }
-  };
+  }, [backupPath, runAutoBackup]);
 
   const handleRenamePerson = async () => {
     if (!personToRename || !renameValue.trim() || isSubmitting) return;
