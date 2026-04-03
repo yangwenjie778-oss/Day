@@ -1872,6 +1872,32 @@ export default function App() {
     return fullNotes[noteKey]?.entries || systemTags.map(tag => ({ tag, content: '', images: [] }));
   }, [selectedDay, selectedPerson, fullNotes, systemTags]);
 
+  const saveBackupPath = useCallback(async (pathStr: string) => {
+    const trimmedPath = pathStr.trim();
+    setBackupPath(trimmedPath);
+    backupPathRef.current = trimmedPath;
+    localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, trimmedPath);
+    
+    if (isTauri) {
+      try {
+        const dataDir = await path.appDataDir();
+        // 确保目录存在
+        try {
+          await fs.createDir(dataDir, { recursive: true });
+        } catch (e) {}
+        
+        const configPath = await path.join(dataDir, 'backup_path.config');
+        await fs.writeTextFile(configPath, trimmedPath);
+        console.log('[Persistence] Backup path saved to dedicated config:', trimmedPath);
+        
+        // 同时同步到主数据文件
+        syncFullDataToFile();
+      } catch (err) {
+        console.error('[Persistence] Failed to save backup path to config file:', err);
+      }
+    }
+  }, [isTauri, syncFullDataToFile]);
+
   // Fetch people and notes on mount
   useEffect(() => {
     const loadInitialData = async () => {
@@ -1886,8 +1912,20 @@ export default function App() {
       if (isTauri) {
         try {
           const dataDir = await path.appDataDir();
-          const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
           
+          // 优先尝试从专门的路径配置文件读取
+          try {
+            const configPath = await path.join(dataDir, 'backup_path.config');
+            const savedPath = await fs.readTextFile(configPath);
+            if (savedPath && savedPath.trim()) {
+              bPath = savedPath.trim();
+              console.log('[Persistence] Loaded backup path from dedicated config:', bPath);
+            }
+          } catch (e) {
+            console.log('[Persistence] Dedicated config not found, falling back to main data file.');
+          }
+
+          const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
           const content = await fs.readTextFile(dataPath);
           if (content) {
             const fullData = JSON.parse(content);
@@ -1896,7 +1934,8 @@ export default function App() {
             if (fullData.systemTags) tagsData = fullData.systemTags;
             if (fullData.theme) theme = fullData.theme;
             if (fullData.themeMode) mode = fullData.themeMode;
-            if (fullData.backupPath) bPath = fullData.backupPath;
+            // 如果专门配置文件没读到，才用主文件的
+            if (!bPath && fullData.backupPath) bPath = fullData.backupPath;
             if (fullData.maxBackups) mBackups = fullData.maxBackups;
 
             // Sync to localStorage as a cache
@@ -2066,17 +2105,19 @@ export default function App() {
   };
 
   const handleQuickBackup = useCallback(async () => {
-    if (!backupPath) {
+    const currentPath = backupPathRef.current || backupPath;
+    if (!currentPath) {
       alert('请先在设置中配置备份路径');
       setIsSettingsOpen(true);
       return;
     }
+    
     setIsBackingUp(true);
     try {
       await runAutoBackup();
-      alert('备份成功！已保存至: ' + backupPath);
-    } catch (e) {
-      alert('备份失败: ' + (e instanceof Error ? e.message : String(e)));
+      alert(`备份成功！\n已保存至目录：\n${currentPath}`);
+    } catch (err: any) {
+      alert('备份失败：' + (err.message || '未知错误'));
     } finally {
       setIsBackingUp(false);
     }
@@ -2781,13 +2822,7 @@ export default function App() {
                                 try {
                                   const selected = await desktopApi.selectDirectory();
                                   if (selected && typeof selected === 'string') {
-                                    setBackupPath(selected);
-                                    localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, selected);
-                                    // 立即同步到持久化文件，确保重启后依然有效
-                                    if (isTauri) {
-                                      backupPathRef.current = selected;
-                                      syncFullDataToFile();
-                                    }
+                                    await saveBackupPath(selected);
                                   }
                                 } catch (err) {
                                   console.error('Pick directory error:', err);
