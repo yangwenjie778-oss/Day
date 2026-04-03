@@ -1309,6 +1309,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [filterPersonId, setFilterPersonId] = useState<number | null>(null);
+  const [filterStartDate, setFilterStartDate] = useState<string>('');
+  const [filterEndDate, setFilterEndDate] = useState<string>('');
+  const [filterTag, setFilterTag] = useState<string>('');
   const [isPending, startTransition] = useTransition();
   const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
@@ -2161,9 +2165,15 @@ export default function App() {
     setContextMenu({ x: e.clientX, y: e.clientY, personId });
   };
 
-  const handleSearch = useCallback((query: string) => {
+  const handleSearch = useCallback((query: string, filters?: { personId?: number | null, startDate?: string, endDate?: string, tag?: string }) => {
+    const currentQuery = query.toLowerCase();
+    const currentPersonId = filters?.personId !== undefined ? filters.personId : filterPersonId;
+    const currentStartDate = filters?.startDate !== undefined ? filters.startDate : filterStartDate;
+    const currentEndDate = filters?.endDate !== undefined ? filters.endDate : filterEndDate;
+    const currentTag = filters?.tag !== undefined ? filters.tag : filterTag;
+
     setSearchQuery(query);
-    if (!query.trim()) {
+    if (!query.trim() && !currentPersonId && !currentStartDate && !currentEndDate && !currentTag) {
       setSearchResults([]);
       return;
     }
@@ -2171,16 +2181,34 @@ export default function App() {
     
     startTransition(() => {
       const results: any[] = [];
-      const q = query.toLowerCase();
 
       Object.entries(fullNotes).forEach(([key, note]: [string, any]) => {
         const person = people.find(p => p.id === note.person_id);
         if (!person) return;
 
-        const matchingEntries = note.entries.filter((entry: any) => 
-          (entry.content && entry.content.toLowerCase().includes(q)) || 
-          (entry.tag && entry.tag.toLowerCase().includes(q))
-        );
+        // Filter by person
+        if (currentPersonId && person.id !== currentPersonId) return;
+
+        // Filter by date range
+        if (currentStartDate && note.date < currentStartDate) return;
+        if (currentEndDate && note.date > currentEndDate) return;
+
+        const matchingEntries = note.entries.filter((entry: any) => {
+          // Filter out empty entries (no content and no images)
+          const hasContent = entry.content && entry.content.trim().length > 0;
+          const hasImages = entry.images && entry.images.length > 0;
+          if (!hasContent && !hasImages) return false;
+
+          // Filter by tag
+          if (currentTag && entry.tag !== currentTag) return false;
+
+          // Filter by query
+          if (query.trim()) {
+            return (entry.content && entry.content.toLowerCase().includes(currentQuery)) || 
+                   (entry.tag && entry.tag.toLowerCase().includes(currentQuery));
+          }
+          return true;
+        });
 
         matchingEntries.forEach((entry: any) => {
           results.push({
@@ -2195,7 +2223,7 @@ export default function App() {
       setSearchResults(results.sort((a, b) => b.date.localeCompare(a.date)));
       setIsSearching(false);
     });
-  }, [fullNotes, people]);
+  }, [fullNotes, people, filterPersonId, filterStartDate, filterEndDate, filterTag]);
 
   const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
@@ -2480,7 +2508,16 @@ export default function App() {
                 <div className="w-64 border-l border-[var(--color-calendar-border)] p-6 space-y-8 bg-[var(--color-calendar-surface)]">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">筛选</h3>
-                    <button onClick={() => handleSearch('')} className="text-xs text-[var(--color-calendar-text-dim)] hover:text-white flex items-center gap-1">
+                    <button 
+                      onClick={() => {
+                        setFilterPersonId(null);
+                        setFilterStartDate('');
+                        setFilterEndDate('');
+                        setFilterTag('');
+                        handleSearch(searchQuery, { personId: null, startDate: '', endDate: '', tag: '' });
+                      }} 
+                      className="text-xs text-[var(--color-calendar-text-dim)] hover:text-white flex items-center gap-1"
+                    >
                       <Trash2 size={12} /> 重置
                     </button>
                   </div>
@@ -2488,26 +2525,67 @@ export default function App() {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <label className="text-xs text-[var(--color-calendar-text-dim)] font-bold">发送人</label>
-                      <div className="bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text-muted)] cursor-pointer hover:border-[var(--color-calendar-accent)] transition-colors">
-                        点击选择
-                      </div>
+                      <select 
+                        value={filterPersonId || ''}
+                        onChange={(e) => {
+                          const val = e.target.value ? parseInt(e.target.value) : null;
+                          setFilterPersonId(val);
+                          handleSearch(searchQuery, { personId: val });
+                        }}
+                        className="w-full bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text)] focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors"
+                      >
+                        <option value="">全部人员</option>
+                        {people.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
                     </div>
+
                     <div className="space-y-2">
-                      <label className="text-xs text-[var(--color-calendar-text-dim)] font-bold">时间</label>
+                      <label className="text-xs text-[var(--color-calendar-text-dim)] font-bold">时间范围</label>
                       <div className="space-y-2">
-                        <div className="bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text-muted)] cursor-pointer hover:border-[var(--color-calendar-accent)] transition-colors">
-                          开始：点击选择
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-[var(--color-calendar-text-dim)] ml-1">开始日期</span>
+                          <input 
+                            type="date"
+                            value={filterStartDate}
+                            onChange={(e) => {
+                              setFilterStartDate(e.target.value);
+                              handleSearch(searchQuery, { startDate: e.target.value });
+                            }}
+                            className="w-full bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text)] focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors"
+                          />
                         </div>
-                        <div className="bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text-muted)] cursor-pointer hover:border-[var(--color-calendar-accent)] transition-colors">
-                          截止：点击选择
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-[var(--color-calendar-text-dim)] ml-1">结束日期</span>
+                          <input 
+                            type="date"
+                            value={filterEndDate}
+                            onChange={(e) => {
+                              setFilterEndDate(e.target.value);
+                              handleSearch(searchQuery, { endDate: e.target.value });
+                            }}
+                            className="w-full bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text)] focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors"
+                          />
                         </div>
                       </div>
                     </div>
+
                     <div className="space-y-2">
-                      <label className="text-xs text-[var(--color-calendar-text-dim)] font-bold">@用户</label>
-                      <div className="bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text-muted)] cursor-pointer hover:border-[var(--color-calendar-accent)] transition-colors">
-                        点击选择
-                      </div>
+                      <label className="text-xs text-[var(--color-calendar-text-dim)] font-bold">标签筛选</label>
+                      <select 
+                        value={filterTag}
+                        onChange={(e) => {
+                          setFilterTag(e.target.value);
+                          handleSearch(searchQuery, { tag: e.target.value });
+                        }}
+                        className="w-full bg-[var(--color-calendar-surface-hover)] px-3 py-2 rounded-lg border border-[var(--color-calendar-border)] text-sm text-[var(--color-calendar-text)] focus:outline-none focus:border-[var(--color-calendar-accent)] transition-colors"
+                      >
+                        <option value="">全部标签</option>
+                        {systemTags.map(tag => (
+                          <option key={tag} value={tag}>{tag}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
