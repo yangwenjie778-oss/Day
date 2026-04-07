@@ -1321,14 +1321,14 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [themeColor, setThemeColor] = useState('#3b82f6');
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
-  const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
+  const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK');
   const [maxBackups, setMaxBackups] = useState<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
 
   const fullNotesRef = useRef<Record<string, Note>>(getLocalNotes());
   const peopleRef = useRef<Person[]>(getLocalPeople());
   const selectedPersonRef = useRef<Person | null>(null);
   const systemTagsRef = useRef<string[]>(getSystemTags());
-  const backupPathRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '');
+  const backupPathRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK');
   const maxBackupsRef = useRef<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
   const themeColorRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6');
   const themeModeRef = useRef<'dark' | 'light'>((localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark');
@@ -1906,7 +1906,7 @@ export default function App() {
       let tagsData = getSystemTags();
       let theme = localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6';
       let mode = (localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark';
-      let bPath = localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || '';
+      let bPath = localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK';
       let mBackups = parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10');
 
       if (isTauri) {
@@ -1935,7 +1935,7 @@ export default function App() {
             if (fullData.theme) theme = fullData.theme;
             if (fullData.themeMode) mode = fullData.themeMode;
             // 如果专门配置文件没读到，才用主文件的
-            if (!bPath && fullData.backupPath) bPath = fullData.backupPath;
+            if ((!bPath || bPath === 'E:\\DayBACK') && fullData.backupPath) bPath = fullData.backupPath;
             if (fullData.maxBackups) mBackups = fullData.maxBackups;
 
             // Sync to localStorage as a cache
