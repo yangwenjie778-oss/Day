@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readDir: (dirPath) => ipcRenderer.invoke('read-dir', dirPath),
   removeFile: (filePath) => ipcRenderer.invoke('remove-file', filePath),
   createDir: (dirPath) => ipcRenderer.invoke('create-dir', dirPath),
-  joinPath: (...args) => ipcRenderer.invoke('join-path', ...args)
+  joinPath: (...args) => ipcRenderer.invoke('join-path', ...args),
+  saveDialog: (options) => ipcRenderer.invoke('save-dialog', options)
 });

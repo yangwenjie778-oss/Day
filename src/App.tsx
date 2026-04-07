@@ -1440,7 +1440,9 @@ export default function App() {
     });
 
     const sortedDates = Object.keys(groupedByDate).sort((a, b) => a.localeCompare(b));
-    let htmlContent = `
+    const htmlParts: string[] = [];
+    
+    htmlParts.push(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -1476,11 +1478,11 @@ export default function App() {
           <div class="meta">导出时间: ${format(new Date(), 'yyyy年MM月dd日 HH:mm:ss')}</div>
           <div class="meta">共计 ${sortedDates.length} 天有内容记录</div>
         </div>
-    `;
+    `);
 
     sortedDates.forEach(date => {
       const notes = groupedByDate[date];
-      htmlContent += `
+      htmlParts.push(`
         <div class="date-section">
           <div class="date-header">
             <span>📅 ${date}</span>
@@ -1489,11 +1491,11 @@ export default function App() {
             </span>
           </div>
           <div class="notes-grid">
-      `;
+      `);
       
       notes.forEach(note => {
         const person = peopleData.find(p => p.id === note.person_id);
-        htmlContent += `
+        htmlParts.push(`
           <div class="note-card">
             <div class="person-info">
               <div class="person-avatar">${person?.name.charAt(0) || '?'}</div>
@@ -1515,13 +1517,14 @@ export default function App() {
               </div>
             `).join('')}
           </div>
-        `;
+        `);
       });
       
-      htmlContent += `</div></div>`;
+      htmlParts.push(`</div></div>`);
     });
 
-    htmlContent += `</body></html>`;
+    htmlParts.push(`</body></html>`);
+    const htmlContent = htmlParts.join('');
     return { jsonStr, htmlContent };
   };
 
@@ -1613,18 +1616,32 @@ export default function App() {
       const jsonFilePath = await desktopApi.joinPath(bPath, jsonFileName);
       const htmlFilePath = await desktopApi.joinPath(bPath, htmlFileName);
       
+      console.log(`[Backup] File paths: JSON=${jsonFilePath}, HTML=${htmlFilePath}`);
+      console.log(`[Backup] Content sizes: JSON=${jsonStr.length}, HTML=${htmlContent.length}`);
+
       // 确保目录存在
       try {
         await desktopApi.createDir(bPath, { recursive: true });
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[Backup] Directory creation warning (might already exist or be root):', e);
+      }
 
+      console.log('[Backup] Writing JSON file...');
       await desktopApi.writeTextFile(jsonFilePath, jsonStr);
-      await desktopApi.writeTextFile(htmlFilePath, htmlContent);
       
-      console.log(`Backup files written: ${jsonFileName} and ${htmlFileName}`);
+      console.log('[Backup] Writing HTML file...');
+      try {
+        await desktopApi.writeTextFile(htmlFilePath, htmlContent);
+      } catch (htmlErr) {
+        console.error('[Backup] HTML write failed:', htmlErr);
+        // 如果 HTML 写入失败，我们仍然认为 JSON 成功了，但抛出更具体的错误
+        throw new Error(`JSON 备份已保存，但 HTML 报告保存失败: ${htmlErr instanceof Error ? htmlErr.message : String(htmlErr)}`);
+      }
+      
+      console.log(`[Backup] Success: ${jsonFileName} and ${htmlFileName}`);
       return { jsonFileName, htmlFileName, bPath };
     } catch (err) {
-      console.error('Backup error:', err);
+      console.error('[Backup] Overall error:', err);
       throw err;
     }
   };
@@ -2124,7 +2141,7 @@ export default function App() {
   };
 
   const handleQuickBackup = useCallback(async () => {
-    if (!isTauri) {
+    if (!isTauri && !isElectron) {
       alert('该功能仅在桌面端可用');
       return;
     }
@@ -2135,20 +2152,44 @@ export default function App() {
       const defaultFileName = `calendar_backup_${timestamp}.json`;
       const lastPath = backupPathRef.current || 'E:\\DayBACK';
 
+      console.log('[Backup] Opening save dialog...');
       // 弹出另存为对话框
-      const savePath = await dialog.save({
-        defaultPath: await path.join(lastPath, defaultFileName),
-        filters: [{ name: 'JSON', extensions: ['json'] }]
-      });
+      let savePath: string | null = null;
+      if (isTauri) {
+        savePath = await dialog.save({
+          defaultPath: await path.join(lastPath, defaultFileName),
+          filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+      } else if (isElectron) {
+        savePath = await (window as any).electronAPI.saveDialog({
+          defaultPath: defaultFileName,
+          filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+      }
 
-      if (!savePath) return; // 用户取消
+      if (!savePath) {
+        console.log('[Backup] User cancelled save dialog');
+        return;
+      }
 
       setIsBackingUp(true);
       
       // 获取保存目录和文件名
-      const selectedDir = await path.dirname(savePath);
-      const selectedFileName = await path.basename(savePath);
+      let selectedDir = '';
+      let selectedFileName = '';
+
+      if (isTauri) {
+        selectedDir = await path.dirname(savePath);
+        selectedFileName = await path.basename(savePath);
+      } else {
+        // 简单的路径处理，适用于 Electron (假设是 Windows 路径)
+        const lastSlash = Math.max(savePath.lastIndexOf('\\'), savePath.lastIndexOf('/'));
+        selectedDir = savePath.substring(0, lastSlash);
+        selectedFileName = savePath.substring(lastSlash + 1);
+      }
       
+      console.log(`[Backup] Selected: Dir=${selectedDir}, File=${selectedFileName}`);
+
       // 更新并保存最后使用的路径
       await saveBackupPath(selectedDir);
 
@@ -2159,11 +2200,13 @@ export default function App() {
         alert(`备份成功！\n已保存至目录：\n${result.bPath}\n文件：\n${result.jsonFileName}\n${result.htmlFileName}`);
       }
     } catch (err: any) {
-      alert('备份失败：' + (err.message || '未知错误'));
+      console.error('[Backup] handleQuickBackup error:', err);
+      const errorMsg = err instanceof Error ? err.message : (typeof err === 'string' ? err : JSON.stringify(err));
+      alert('备份失败：' + (errorMsg || '未知错误'));
     } finally {
       setIsBackingUp(false);
     }
-  }, [runAutoBackup, saveBackupPath]);
+  }, [runAutoBackup, saveBackupPath, isTauri, isElectron]);
 
   const handleRenamePerson = async () => {
     if (!personToRename || !renameValue.trim() || isSubmitting) return;

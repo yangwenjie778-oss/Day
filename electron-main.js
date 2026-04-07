@@ -100,6 +100,15 @@ ipcMain.handle('join-path', async (event, ...args) => {
   return path.join(...args);
 });
 
+ipcMain.handle('save-dialog', async (event, options) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: options.defaultPath,
+    filters: options.filters
+  });
+  if (canceled) return null;
+  return filePath;
+});
+
 app.whenReady().then(() => {
   createWindow();
 
