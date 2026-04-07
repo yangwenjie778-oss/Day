@@ -1585,8 +1585,8 @@ export default function App() {
     }
   };
 
-  const runAutoBackup = async (targetPath?: string) => {
-    const bPath = targetPath || backupPathRef.current || 'E:\\DayBACK';
+  const runAutoBackup = async (targetDir?: string, baseFileName?: string) => {
+    const bPath = targetDir || backupPathRef.current || 'E:\\DayBACK';
     
     if (!isDesktop) {
       console.log('Backup skipped: Not Desktop');
@@ -1598,11 +1598,17 @@ export default function App() {
     try {
       const { jsonStr, htmlContent } = await generateBackupData();
       const now = new Date();
-      // 使用更精确的时间戳，包含毫秒，彻底防止同秒冲突
-      const timestamp = format(now, 'yyyyMMdd_HHmmss_SSS');
+      const timestamp = format(now, 'yyyyMMdd_HHmmss');
       
-      const jsonFileName = `backup_${timestamp}.json`;
-      const htmlFileName = `backup_${timestamp}.html`;
+      // 如果提供了 baseFileName，则使用它（去掉扩展名），否则使用默认日期格式
+      let jsonFileName = `backup_${timestamp}.json`;
+      let htmlFileName = `backup_${timestamp}.html`;
+
+      if (baseFileName) {
+        const nameWithoutExt = baseFileName.replace(/\.json$/i, '');
+        jsonFileName = `${nameWithoutExt}.json`;
+        htmlFileName = `${nameWithoutExt}.html`;
+      }
       
       const jsonFilePath = await desktopApi.joinPath(bPath, jsonFileName);
       const htmlFilePath = await desktopApi.joinPath(bPath, htmlFileName);
@@ -1615,7 +1621,8 @@ export default function App() {
       await desktopApi.writeTextFile(jsonFilePath, jsonStr);
       await desktopApi.writeTextFile(htmlFilePath, htmlContent);
       
-      console.log(`Backup files written: ${jsonFileName}`);
+      console.log(`Backup files written: ${jsonFileName} and ${htmlFileName}`);
+      return { jsonFileName, htmlFileName, bPath };
     } catch (err) {
       console.error('Backup error:', err);
       throw err;
@@ -1675,19 +1682,21 @@ export default function App() {
     setIsSubmitting(true);
     
     try {
+      let finalPeople = people;
+      let finalNotes = fullNotes;
+
       if (mode === 'overwrite') {
-        setPeople(importData.people);
-        setFullNotes(importData.notes);
+        finalPeople = importData.people;
+        finalNotes = importData.notes;
         if (importData.theme) setThemeColor(importData.theme);
         if (importData.themeMode) setThemeMode(importData.themeMode as 'dark' | 'light');
       } else {
         // Merge people
-        const currentPeople = people;
-        const mergedPeople = [...currentPeople];
+        const mergedPeople = [...people];
         const personIdMap: Record<number, number> = {};
 
         importData.people.forEach(newP => {
-          if (newP.id === 1) return;
+          // 移除 ID 为 1 的限制，除非它是特殊的汇总项
           const existing = mergedPeople.find(p => p.name === newP.name);
           if (!existing) {
             const newId = Date.now() + Math.floor(Math.random() * 1000);
@@ -1697,18 +1706,22 @@ export default function App() {
             personIdMap[newP.id] = existing.id;
           }
         });
-        setPeople(mergedPeople);
+        finalPeople = mergedPeople;
 
         // Merge notes
-        const currentNotes = fullNotes;
-        const mergedNotes = { ...currentNotes };
+        const mergedNotes = { ...fullNotes };
         Object.entries(importData.notes).forEach(([key, noteData]) => {
           const note = noteData as Note;
-          const [oldPersonId, dateStr] = key.split('_');
-          const newPersonId = personIdMap[parseInt(oldPersonId)];
+          const parts = key.split('_');
+          if (parts.length < 2) return;
+          const oldPersonId = parseInt(parts[0]);
+          const dateStr = parts[1];
+          const newPersonId = personIdMap[oldPersonId];
+          
           if (newPersonId) {
             const newKey = `${newPersonId}_${dateStr}`;
             if (mergedNotes[newKey]) {
+              // 合并 entries，去重或直接追加
               mergedNotes[newKey].entries = [
                 ...mergedNotes[newKey].entries,
                 ...note.entries
@@ -1718,14 +1731,25 @@ export default function App() {
             }
           }
         });
-        setFullNotes(mergedNotes);
+        finalNotes = mergedNotes;
       }
       
-      // Wait for state to settle
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (isTauri) await syncFullDataToFile();
+      // 关键：手动更新 Ref，确保 syncFullDataToFile 拿到的是最新数据
+      peopleRef.current = finalPeople;
+      fullNotesRef.current = finalNotes;
       
-      alert('导入成功！');
+      setPeople(finalPeople);
+      setFullNotes(finalNotes);
+
+      // 同步到本地存储作为缓存
+      localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(finalPeople));
+      localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(finalNotes));
+
+      if (isTauri) {
+        await syncFullDataToFile();
+      }
+      
+      alert('导入成功！软件将自动刷新以应用更改。');
       window.location.reload();
     } catch (e) {
       console.error('Import failed:', e);
@@ -2121,16 +2145,19 @@ export default function App() {
 
       setIsBackingUp(true);
       
-      // 获取保存目录
+      // 获取保存目录和文件名
       const selectedDir = await path.dirname(savePath);
+      const selectedFileName = await path.basename(savePath);
       
       // 更新并保存最后使用的路径
       await saveBackupPath(selectedDir);
 
-      // 执行备份
-      await runAutoBackup(selectedDir);
+      // 执行备份，传入目录和文件名
+      const result = await runAutoBackup(selectedDir, selectedFileName);
       
-      alert(`备份成功！\n已保存至目录：\n${selectedDir}`);
+      if (result) {
+        alert(`备份成功！\n已保存至目录：\n${result.bPath}\n文件：\n${result.jsonFileName}\n${result.htmlFileName}`);
+      }
     } catch (err: any) {
       alert('备份失败：' + (err.message || '未知错误'));
     } finally {
@@ -2819,53 +2846,6 @@ export default function App() {
                       提示：定期导出备份可以防止数据丢失。导入备份时，您可以选择覆盖当前数据或将新数据合并到现有数据中。
                     </p>
                   </div>
-
-                  {isDesktop && (
-                    <div className="space-y-4 pt-4 border-t border-[var(--color-calendar-border)]">
-                      <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">自动备份 (仅限桌面端)</label>
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-xs text-[var(--color-calendar-text-dim)]">最后备份路径</label>
-                          <div className="flex gap-2">
-                            <input 
-                              readOnly
-                              value={backupPath || '未设置'}
-                              className="flex-1 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-3 py-2 text-xs text-[var(--color-calendar-text-muted)] focus:outline-none"
-                            />
-                            <button 
-                              onClick={handleQuickBackup}
-                              className="px-3 py-2 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] border border-[var(--color-calendar-accent)]/30 rounded-lg text-xs hover:bg-[var(--color-calendar-accent)]/20 transition-colors"
-                            >
-                              立即备份
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-xs text-[var(--color-calendar-text-dim)]">最大备份数量</label>
-                          <input 
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={maxBackups}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value) || 1;
-                              setMaxBackups(val);
-                              localStorage.setItem(STORAGE_KEYS.MAX_BACKUPS, val.toString());
-                              // 立即同步到持久化文件
-                              if (isTauri) {
-                                maxBackupsRef.current = val;
-                                syncFullDataToFile();
-                              }
-                            }}
-                            className="w-full bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[var(--color-calendar-accent)]"
-                          />
-                        </div>
-                        <p className="text-[10px] text-[var(--color-calendar-text-dim)] leading-relaxed">
-                          开启后，软件关闭时将自动在指定路径生成 JSON 和 HTML 备份，并自动清理旧备份。
-                        </p>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
