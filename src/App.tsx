@@ -2147,57 +2147,42 @@ export default function App() {
     }
 
     try {
-      const now = new Date();
-      const timestamp = format(now, 'yyyyMMdd_HHmm');
-      const defaultFileName = `calendar_backup_${timestamp}.json`;
+      console.log('[Backup] Opening directory selection dialog...');
+      // 弹出选择目录对话框，而不是另存为文件，这样可以获得整个目录的写入权限
+      let selectedDir: string | null = null;
       const lastPath = backupPathRef.current || 'E:\\DayBACK';
 
-      console.log('[Backup] Opening save dialog...');
-      // 弹出另存为对话框
-      let savePath: string | null = null;
       if (isTauri) {
-        savePath = await dialog.save({
-          defaultPath: await path.join(lastPath, defaultFileName),
-          filters: [{ name: 'JSON', extensions: ['json'] }]
-        });
+        selectedDir = await dialog.open({
+          directory: true,
+          defaultPath: lastPath,
+          title: '选择备份保存目录'
+        }) as string | null;
       } else if (isElectron) {
-        savePath = await (window as any).electronAPI.saveDialog({
-          defaultPath: defaultFileName,
-          filters: [{ name: 'JSON', extensions: ['json'] }]
-        });
+        selectedDir = await (window as any).electronAPI.selectDirectory();
       }
 
-      if (!savePath) {
-        console.log('[Backup] User cancelled save dialog');
+      if (!selectedDir) {
+        console.log('[Backup] User cancelled directory selection');
         return;
       }
 
+      // 立即显示备份中遮罩
       setIsBackingUp(true);
       
-      // 获取保存目录和文件名
-      let selectedDir = '';
-      let selectedFileName = '';
+      // 使用 setTimeout 确保 UI 遮罩层先渲染出来，避免卡顿感
+      await new Promise(resolve => setTimeout(resolve, 100));
 
-      if (isTauri) {
-        selectedDir = await path.dirname(savePath);
-        selectedFileName = await path.basename(savePath);
-      } else {
-        // 简单的路径处理，适用于 Electron (假设是 Windows 路径)
-        const lastSlash = Math.max(savePath.lastIndexOf('\\'), savePath.lastIndexOf('/'));
-        selectedDir = savePath.substring(0, lastSlash);
-        selectedFileName = savePath.substring(lastSlash + 1);
-      }
-      
-      console.log(`[Backup] Selected: Dir=${selectedDir}, File=${selectedFileName}`);
+      console.log(`[Backup] Selected Directory: ${selectedDir}`);
 
       // 更新并保存最后使用的路径
       await saveBackupPath(selectedDir);
 
-      // 执行备份，传入目录和文件名
-      const result = await runAutoBackup(selectedDir, selectedFileName);
+      // 执行备份
+      const result = await runAutoBackup(selectedDir);
       
       if (result) {
-        alert(`备份成功！\n已保存至目录：\n${result.bPath}\n文件：\n${result.jsonFileName}\n${result.htmlFileName}`);
+        alert(`备份成功！\n已自动生成 JSON 和 HTML 文件。\n保存目录：\n${result.bPath}`);
       }
     } catch (err: any) {
       console.error('[Backup] handleQuickBackup error:', err);
