@@ -1321,14 +1321,14 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [themeColor, setThemeColor] = useState('#3b82f6');
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
-  const [backupPath] = useState<string>('E:\\DayBACK');
+  const [backupPath, setBackupPath] = useState<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK');
   const [maxBackups, setMaxBackups] = useState<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
 
   const fullNotesRef = useRef<Record<string, Note>>(getLocalNotes());
   const peopleRef = useRef<Person[]>(getLocalPeople());
   const selectedPersonRef = useRef<Person | null>(null);
   const systemTagsRef = useRef<string[]>(getSystemTags());
-  const backupPathRef = useRef<string>('E:\\DayBACK');
+  const backupPathRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK');
   const maxBackupsRef = useRef<number>(parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10'));
   const themeColorRef = useRef<string>(localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6');
   const themeModeRef = useRef<'dark' | 'light'>((localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark');
@@ -1585,8 +1585,8 @@ export default function App() {
     }
   };
 
-  const runAutoBackup = async () => {
-    const bPath = 'E:\\DayBACK';
+  const runAutoBackup = async (targetPath?: string) => {
+    const bPath = targetPath || backupPathRef.current || 'E:\\DayBACK';
     
     if (!isDesktop) {
       console.log('Backup skipped: Not Desktop');
@@ -1618,6 +1618,7 @@ export default function App() {
       console.log(`Backup files written: ${jsonFileName}`);
     } catch (err) {
       console.error('Backup error:', err);
+      throw err;
     }
   };
 
@@ -1866,6 +1867,32 @@ export default function App() {
     return fullNotes[noteKey]?.entries || systemTags.map(tag => ({ tag, content: '', images: [] }));
   }, [selectedDay, selectedPerson, fullNotes, systemTags]);
 
+  const saveBackupPath = useCallback(async (pathStr: string) => {
+    const trimmedPath = pathStr.trim();
+    setBackupPath(trimmedPath);
+    backupPathRef.current = trimmedPath;
+    localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, trimmedPath);
+    
+    if (isTauri) {
+      try {
+        const dataDir = await path.appDataDir();
+        // 确保目录存在
+        try {
+          await fs.createDir(dataDir, { recursive: true });
+        } catch (e) {}
+        
+        const configPath = await path.join(dataDir, 'backup_path.config');
+        await fs.writeTextFile(configPath, trimmedPath);
+        console.log('[Persistence] Backup path saved to dedicated config:', trimmedPath);
+        
+        // 同时同步到主数据文件
+        syncFullDataToFile();
+      } catch (err) {
+        console.error('[Persistence] Failed to save backup path to config file:', err);
+      }
+    }
+  }, [isTauri, syncFullDataToFile]);
+
   // Fetch people and notes on mount
   useEffect(() => {
     const loadInitialData = async () => {
@@ -1874,11 +1901,25 @@ export default function App() {
       let tagsData = getSystemTags();
       let theme = localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6';
       let mode = (localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark';
+      let bPath = localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK';
       let mBackups = parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10');
 
       if (isTauri) {
         try {
           const dataDir = await path.appDataDir();
+          
+          // 优先尝试从专门的路径配置文件读取
+          try {
+            const configPath = await path.join(dataDir, 'backup_path.config');
+            const savedPath = await fs.readTextFile(configPath);
+            if (savedPath && savedPath.trim()) {
+              bPath = savedPath.trim();
+              console.log('[Persistence] Loaded backup path from dedicated config:', bPath);
+            }
+          } catch (e) {
+            console.log('[Persistence] Dedicated config not found, falling back to main data file.');
+          }
+
           const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
           const content = await fs.readTextFile(dataPath);
           if (content) {
@@ -1888,6 +1929,8 @@ export default function App() {
             if (fullData.systemTags) tagsData = fullData.systemTags;
             if (fullData.theme) theme = fullData.theme;
             if (fullData.themeMode) mode = fullData.themeMode;
+            // 如果专门配置文件没读到，才用主文件的
+            if ((!bPath || bPath === 'E:\\DayBACK') && fullData.backupPath) bPath = fullData.backupPath;
             if (fullData.maxBackups) mBackups = fullData.maxBackups;
 
             // Sync to localStorage as a cache
@@ -1896,6 +1939,7 @@ export default function App() {
             localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tagsData));
             localStorage.setItem(STORAGE_KEYS.THEME, theme);
             localStorage.setItem(STORAGE_KEYS.THEME_MODE, mode);
+            localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, bPath);
             localStorage.setItem(STORAGE_KEYS.MAX_BACKUPS, mBackups.toString());
           }
         } catch (e) {
@@ -1915,6 +1959,8 @@ export default function App() {
       systemTagsRef.current = tagsData;
       setThemeColor(theme);
       setThemeMode(mode);
+      setBackupPath(bPath);
+      backupPathRef.current = bPath;
       setMaxBackups(mBackups);
       maxBackupsRef.current = mBackups;
       setIsLoading(false);
@@ -2054,16 +2100,43 @@ export default function App() {
   };
 
   const handleQuickBackup = useCallback(async () => {
-    setIsBackingUp(true);
+    if (!isTauri) {
+      alert('该功能仅在桌面端可用');
+      return;
+    }
+
     try {
-      await runAutoBackup();
-      alert(`备份成功！\n已保存至目录：\nE:\\DayBACK`);
+      const now = new Date();
+      const timestamp = format(now, 'yyyyMMdd_HHmm');
+      const defaultFileName = `calendar_backup_${timestamp}.json`;
+      const lastPath = backupPathRef.current || 'E:\\DayBACK';
+
+      // 弹出另存为对话框
+      const savePath = await dialog.save({
+        defaultPath: await path.join(lastPath, defaultFileName),
+        filters: [{ name: 'JSON', extensions: ['json'] }]
+      });
+
+      if (!savePath) return; // 用户取消
+
+      setIsBackingUp(true);
+      
+      // 获取保存目录
+      const selectedDir = await path.dirname(savePath);
+      
+      // 更新并保存最后使用的路径
+      await saveBackupPath(selectedDir);
+
+      // 执行备份
+      await runAutoBackup(selectedDir);
+      
+      alert(`备份成功！\n已保存至目录：\n${selectedDir}`);
     } catch (err: any) {
       alert('备份失败：' + (err.message || '未知错误'));
     } finally {
       setIsBackingUp(false);
     }
-  }, [runAutoBackup]);
+  }, [runAutoBackup, saveBackupPath]);
 
   const handleRenamePerson = async () => {
     if (!personToRename || !renameValue.trim() || isSubmitting) return;
@@ -2752,25 +2825,15 @@ export default function App() {
                       <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">自动备份 (仅限桌面端)</label>
                       <div className="space-y-4">
                         <div className="space-y-2">
-                          <label className="text-xs text-[var(--color-calendar-text-dim)]">备份路径</label>
+                          <label className="text-xs text-[var(--color-calendar-text-dim)]">最后备份路径</label>
                           <div className="flex gap-2">
                             <input 
                               readOnly
-                              value="E:\DayBACK"
+                              value={backupPath || '未设置'}
                               className="flex-1 bg-[var(--color-calendar-page-bg)] border border-[var(--color-calendar-border)] rounded-lg px-3 py-2 text-xs text-[var(--color-calendar-text-muted)] focus:outline-none"
                             />
                             <button 
-                              onClick={async () => {
-                                setIsBackingUp(true);
-                                try {
-                                  await runAutoBackup();
-                                  alert('备份完成！已保存至 E:\\DayBACK');
-                                } catch (e) {
-                                  alert('备份失败');
-                                } finally {
-                                  setIsBackingUp(false);
-                                }
-                              }}
+                              onClick={handleQuickBackup}
                               className="px-3 py-2 bg-[var(--color-calendar-accent)]/10 text-[var(--color-calendar-accent)] border border-[var(--color-calendar-accent)]/30 rounded-lg text-xs hover:bg-[var(--color-calendar-accent)]/20 transition-colors"
                             >
                               立即备份
