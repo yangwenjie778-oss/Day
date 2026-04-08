@@ -159,7 +159,7 @@ const CalendarDayCell = React.memo(({
       onClick={() => onClick(day.date)}
       onContextMenu={(e) => onContextMenu(e, day.date)}
       className={cn(
-        "min-h-[100px] p-2 border-r border-b border-[var(--color-calendar-border)] transition-all cursor-pointer group relative overflow-hidden",
+        "min-h-[120px] p-1.5 border-r border-b border-[var(--color-calendar-border)] transition-all cursor-pointer group relative overflow-hidden",
         !day.isCurrentMonth && "bg-[var(--color-calendar-page-bg)] opacity-30",
         day.isCurrentMonth && "bg-[var(--color-calendar-surface)] hover:bg-[var(--color-calendar-surface-hover)]",
         isSelected && "ring-2 ring-inset ring-[var(--color-calendar-accent)] bg-[var(--color-calendar-accent)]/5 z-10"
@@ -174,28 +174,31 @@ const CalendarDayCell = React.memo(({
         </span>
       </div>
       
-      <div className="space-y-1 overflow-hidden">
-        {note && note.entries && note.entries.slice(0, 3).map((entry: any, eIdx: number) => (
-          <div key={eIdx} className="space-y-0.5">
-            {entry.content && (
-              <p className="text-[10px] text-[var(--color-calendar-text-secondary)] line-clamp-1 leading-tight">
-                {entry.tag && <span className="text-[var(--color-calendar-accent)]/70 font-bold">[{entry.tag}] </span>}
-                {entry.content}
-              </p>
-            )}
-            {entry.images && entry.images.length > 0 && eIdx === 0 && (
-              <div className="flex gap-0.5 mt-0.5">
-                {entry.images.slice(0, 3).map((img: string, i: number) => (
-                  <div key={i} className="w-4 h-4 rounded-sm bg-[var(--color-calendar-border)] overflow-hidden shrink-0">
-                    <img src={img} alt="" className="w-full h-full object-cover opacity-50" referrerPolicy="no-referrer" />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-        {note && note.entries && note.entries.length > 3 && (
-          <p className="text-[9px] text-[var(--color-calendar-accent)] font-bold">+{note.entries.length - 3} 更多...</p>
+      <div className="space-y-0.5 overflow-hidden">
+        {note && note.entries && note.entries
+          .filter((entry: any) => entry.content || (entry.images && entry.images.length > 0))
+          .slice(0, 15)
+          .map((entry: any, eIdx: number) => (
+            <div key={eIdx} className="space-y-0.5">
+              {entry.content && (
+                <p className="text-[10px] text-[var(--color-calendar-text-secondary)] line-clamp-1 leading-tight">
+                  {entry.tag && <span className="text-[var(--color-calendar-accent)]/70 font-bold">[{entry.tag}] </span>}
+                  {entry.content}
+                </p>
+              )}
+              {entry.images && entry.images.length > 0 && (
+                <div className="flex gap-0.5 mt-0.5">
+                  {entry.images.slice(0, 3).map((img: string, i: number) => (
+                    <div key={i} className="w-4 h-4 rounded-sm bg-[var(--color-calendar-border)] overflow-hidden shrink-0">
+                      <img src={img} alt="" className="w-full h-full object-cover opacity-50" referrerPolicy="no-referrer" />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        {note && note.entries && note.entries.length > 15 && (
+          <p className="text-[9px] text-[var(--color-calendar-accent)] font-bold">+{note.entries.length - 15} 更多...</p>
         )}
       </div>
     </div>
@@ -1870,11 +1873,20 @@ export default function App() {
     
     setFullNotes(prev => {
       const updated = { ...prev };
-      updated[noteKey] = {
-        person_id: selectedPerson.id,
-        date: dateKey,
-        entries: updatedEntries
-      };
+      const filteredEntries = updatedEntries.filter(e => 
+        (e.content && e.content.trim() !== '') || 
+        (e.images && e.images.length > 0)
+      );
+      
+      if (filteredEntries.length === 0) {
+        delete updated[noteKey];
+      } else {
+        updated[noteKey] = {
+          person_id: selectedPerson.id,
+          date: dateKey,
+          entries: filteredEntries
+        };
+      }
       return updated;
     });
     
@@ -1889,12 +1901,18 @@ export default function App() {
     
     const summary: { person: Person, note: Note }[] = [];
     
-    // Include all personnel
+    // Include only personnel with actual content
     allPeople.forEach(person => {
       const personNoteKey = `${person.id}_${dateStr}`;
       const note = allNotes[personNoteKey];
-      if (note && note.entries && note.entries.length > 0) {
-        summary.push({ person, note });
+      if (note && note.entries) {
+        const hasContent = note.entries.some((e: any) => 
+          (e.content && e.content.trim() !== '') || 
+          (e.images && e.images.length > 0)
+        );
+        if (hasContent) {
+          summary.push({ person, note });
+        }
       }
     });
     
@@ -2038,19 +2056,32 @@ export default function App() {
         const person = people.find(p => p.id === note.person_id);
         const personName = person ? person.name : '未知';
         
+        const validEntries = note.entries.filter((e: any) => 
+          (e.content && e.content.trim() !== '') || 
+          (e.images && e.images.length > 0)
+        ).map((e: any) => ({ ...e, tag: `${personName} - ${e.tag}` }));
+
+        if (validEntries.length === 0) return;
+
         if (!notesMap[note.date]) {
           notesMap[note.date] = { 
             ...note, 
-            entries: note.entries.map((e: any) => ({ ...e, tag: `${personName} - ${e.tag}` })) 
+            entries: validEntries 
           };
         } else {
           notesMap[note.date].entries = [
             ...notesMap[note.date].entries,
-            ...note.entries.map((e: any) => ({ ...e, tag: `${personName} - ${e.tag}` }))
+            ...validEntries
           ];
         }
       } else if (note.person_id === selectedPerson.id) {
-        notesMap[note.date] = note;
+        const validEntries = note.entries.filter((e: any) => 
+          (e.content && e.content.trim() !== '') || 
+          (e.images && e.images.length > 0)
+        );
+        if (validEntries.length > 0) {
+          notesMap[note.date] = { ...note, entries: validEntries };
+        }
       }
     });
     
