@@ -1923,7 +1923,22 @@ export default function App() {
     if (!selectedDay || !selectedPerson) return [];
     const dateStr = format(selectedDay, 'yyyy-MM-dd');
     const noteKey = `${selectedPerson.id}_${dateStr}`;
-    return fullNotes[noteKey]?.entries || systemTags.map(tag => ({ tag, content: '', images: [] }));
+    const savedEntries = fullNotes[noteKey]?.entries || [];
+    
+    // Always start with system tags
+    const entries = systemTags.map(tag => {
+      const saved = savedEntries.find(e => e.tag === tag);
+      return saved || { tag, content: '', images: [] };
+    });
+    
+    // Add any custom tags that were saved but are not in systemTags
+    savedEntries.forEach(saved => {
+      if (!systemTags.includes(saved.tag)) {
+        entries.push(saved);
+      }
+    });
+    
+    return entries;
   }, [selectedDay, selectedPerson, fullNotes, systemTags]);
 
   const saveBackupPath = useCallback(async (pathStr: string) => {
