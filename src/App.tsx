@@ -886,7 +886,7 @@ const NoteModal = React.memo(({
     onClose();
   };
 
-  const compressImage = (base64: string, maxWidth = 1000, maxHeight = 1000, quality = 0.7): Promise<string> => {
+  const compressImage = (base64: string, maxWidth = 800, maxHeight = 800, quality = 0.6): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.src = base64;
@@ -911,6 +911,8 @@ const NoteModal = React.memo(({
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'medium';
           ctx.drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL('image/jpeg', quality));
         } else {
@@ -1803,7 +1805,6 @@ export default function App() {
   const saveSystemTags = (tags: string[]) => {
     localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tags));
     setSystemTags(tags);
-    if (isTauri) syncFullDataToFile();
   };
 
   const saveLocalPeople = (newPeople: Person[]) => {
@@ -1815,7 +1816,7 @@ export default function App() {
   };
 
   const syncFullDataToFile = async () => {
-    if (!isTauri) return;
+    if (!isTauri || isLoading) return;
     try {
       const fullData = {
         people: peopleRef.current,
@@ -1828,40 +1829,31 @@ export default function App() {
       };
       
       const dataDir = await path.appDataDir();
-      try {
-        await fs.createDir(dataDir, { recursive: true });
-      } catch (e) {}
-
       const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
+      
+      // Use raw writeTextFile to ensure it's handled by the OS background
       await fs.writeTextFile(dataPath, JSON.stringify(fullData));
-      console.log('Data synced to file system:', dataPath);
     } catch (e) {
       console.error("Failed to sync data to file system", e);
     }
   };
 
-  // Debounced sync to storage
+  // Improved debounced sync to storage - only sync here to avoid main thread jank
   useEffect(() => {
     if (isLoading) return;
 
     const timer = setTimeout(() => {
-      // Sync to localStorage
+      // Sync to localStorage (Web support)
       try {
-        // Only sync basic info to localStorage to keep it fast
         localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(people));
-        // For notes, we only sync to file system in Tauri to avoid main thread lag
         if (!isTauri) {
           localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(fullNotes));
         }
-      } catch (e) {
-        if (e instanceof DOMException && e.name === 'QuotaExceededError') {
-          if (!isTauri) alert("存储空间已满（浏览器限制5MB）。请尝试删除一些旧记录或图片。");
-        }
-      }
+      } catch (e) {}
 
-      // Sync to file system (Tauri only)
+      // Bulk sync to file system for Desktop app
       if (isTauri) syncFullDataToFile();
-    }, 2000); // Increase debounce to 2 seconds for better performance
+    }, 1500); // 1.5s debounce
 
     return () => clearTimeout(timer);
   }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups, isLoading, isTauri]);
@@ -1890,8 +1882,8 @@ export default function App() {
       return updated;
     });
     
-    if (isTauri) syncFullDataToFile();
-  }, [selectedDay, selectedPerson, isTauri]);
+    // Removed direct syncFullDataToFile() to prevent main thread lag on modal close
+  }, [selectedDay, selectedPerson]);
 
   const getSummaryDataForDay = useCallback((day: Date) => {
     if (!day) return [];
@@ -2067,7 +2059,6 @@ export default function App() {
 
     Object.values(fullNotes).forEach((note: any) => {
       if (selectedPerson.id === 1) {
-        // Aggregate entries from all people for the summary view
         const person = people.find(p => p.id === note.person_id);
         const personName = person ? person.name : '未知';
         
@@ -2084,19 +2075,15 @@ export default function App() {
             entries: validEntries 
           };
         } else {
-          notesMap[note.date].entries = [
-            ...notesMap[note.date].entries,
-            ...validEntries
-          ];
+          // If we are appending entries, we have to create a new object, but we keep other days stable
+          notesMap[note.date] = {
+            ...notesMap[note.date],
+            entries: [...notesMap[note.date].entries, ...validEntries]
+          };
         }
       } else if (note.person_id === selectedPerson.id) {
-        const validEntries = note.entries.filter((e: any) => 
-          (e.content && e.content.trim() !== '') || 
-          (e.images && e.images.length > 0)
-        );
-        if (validEntries.length > 0) {
-          notesMap[note.date] = { ...note, entries: validEntries };
-        }
+        // When not in summary mode, we can point directly to the note object for 100% stable reference
+        notesMap[note.date] = note;
       }
     });
     
