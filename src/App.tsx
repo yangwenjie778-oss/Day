@@ -42,6 +42,8 @@ import {
   Upload,
   FileText
 } from 'lucide-react';
+import { db } from './db';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { cn } from './lib/utils';
 import { Note, CalendarDay, NoteEntry, Person } from './types';
 
@@ -1838,7 +1840,15 @@ export default function App() {
     }
   };
 
-  // Improved debounced sync to storage - only sync here to avoid main thread jank
+  // Setting sync to DB
+  useEffect(() => { if (!isLoading) db.settings.put({ key: 'theme', value: themeColor }); }, [themeColor, isLoading]);
+  useEffect(() => { if (!isLoading) db.settings.put({ key: 'theme_mode', value: themeMode }); }, [themeMode, isLoading]);
+  useEffect(() => { if (!isLoading) db.settings.put({ key: 'backup_path', value: backupPath }); }, [backupPath, isLoading]);
+  useEffect(() => { if (!isLoading) db.settings.put({ key: 'max_backups', value: maxBackups }); }, [maxBackups, isLoading]);
+  useEffect(() => { if (!isLoading) db.settings.put({ key: 'system_tags', value: systemTags }); }, [systemTags, isLoading]);
+  useEffect(() => { if (!isLoading) db.people.clear().then(() => db.people.bulkAdd(people)); }, [people, isLoading]);
+
+  // Improved debounced sync to storage (Legacy support & File backup)
   useEffect(() => {
     if (isLoading) return;
 
@@ -1851,39 +1861,68 @@ export default function App() {
         }
       } catch (e) {}
 
-      // Bulk sync to file system for Desktop app
+      // Bulk sync to file system for Desktop app (Keep as safety backup)
       if (isTauri) syncFullDataToFile();
-    }, 1500); // 1.5s debounce
+    }, 5000); // 5s debounce for the heavy file sync, DB handles immediate saves
 
     return () => clearTimeout(timer);
   }, [fullNotes, people, systemTags, themeColor, themeMode, backupPath, maxBackups, isLoading, isTauri]);
+
+  // Database sync logic
+  const syncToDb = useCallback(async (noteKey: string, noteData: Note | null) => {
+    try {
+      if (noteData) {
+        // Find existing or put new
+        const parts = noteKey.split('_');
+        const person_id = parseInt(parts[0]);
+        const date = parts[1];
+        
+        const existing = await db.notes.where({ person_id, date }).first();
+        if (existing) {
+          await db.notes.update(existing.id!, { entries: noteData.entries });
+        } else {
+          await db.notes.add({ person_id, date, entries: noteData.entries });
+        }
+      } else {
+        const parts = noteKey.split('_');
+        const person_id = parseInt(parts[0]);
+        const date = parts[1];
+        await db.notes.where({ person_id, date }).delete();
+      }
+    } catch (err) {
+      console.error('DB Sync Error:', err);
+    }
+  }, []);
 
   const handleSaveNote = useCallback((updatedEntries: NoteEntry[]) => {
     if (!selectedDay || !selectedPerson) return;
     const dateKey = format(selectedDay, 'yyyy-MM-dd');
     const noteKey = `${selectedPerson.id}_${dateKey}`;
     
+    const filteredEntries = updatedEntries.filter(e => 
+      (e.content && e.content.trim() !== '') || 
+      (e.images && e.images.length > 0)
+    );
+
+    const noteToSave = filteredEntries.length === 0 ? null : {
+      person_id: selectedPerson.id,
+      date: dateKey,
+      entries: filteredEntries
+    };
+
     setFullNotes(prev => {
       const updated = { ...prev };
-      const filteredEntries = updatedEntries.filter(e => 
-        (e.content && e.content.trim() !== '') || 
-        (e.images && e.images.length > 0)
-      );
-      
-      if (filteredEntries.length === 0) {
-        delete updated[noteKey];
+      if (noteToSave) {
+        updated[noteKey] = noteToSave;
       } else {
-        updated[noteKey] = {
-          person_id: selectedPerson.id,
-          date: dateKey,
-          entries: filteredEntries
-        };
+        delete updated[noteKey];
       }
       return updated;
     });
-    
-    // Removed direct syncFullDataToFile() to prevent main thread lag on modal close
-  }, [selectedDay, selectedPerson]);
+
+    // Save to database immediately (much faster than JSON stringify)
+    syncToDb(noteKey, noteToSave);
+  }, [selectedDay, selectedPerson, syncToDb]);
 
   const getSummaryDataForDay = useCallback((day: Date) => {
     if (!day) return [];
@@ -1962,74 +2001,100 @@ export default function App() {
   // Fetch people and notes on mount
   useEffect(() => {
     const loadInitialData = async () => {
-      let peopleData = getLocalPeople();
-      let notesData = getLocalNotes();
-      let tagsData = getSystemTags();
-      let theme = localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6';
-      let mode = (localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark';
-      let bPath = localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK';
-      let mBackups = parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10');
+      try {
+        // 1. Try to load from DB first
+        const dbPeople = await db.people.toArray();
+        const dbNotesList = await db.notes.toArray();
+        const dbTags = await db.settings.get('system_tags');
+        const dbTheme = await db.settings.get('theme');
+        const dbMode = await db.settings.get('theme_mode');
+        const dbBackup = await db.settings.get('backup_path');
+        const dbMaxBackups = await db.settings.get('max_backups');
 
-      if (isTauri) {
-        try {
-          const dataDir = await path.appDataDir();
+        if (dbPeople.length > 0) {
+          console.log('[DB] Loading data from IndexedDB');
+          setPeople(dbPeople);
+          peopleRef.current = dbPeople;
           
-          // 优先尝试从专门的路径配置文件读取
-          try {
-            const configPath = await path.join(dataDir, 'backup_path.config');
-            const savedPath = await fs.readTextFile(configPath);
-            if (savedPath && savedPath.trim()) {
-              bPath = savedPath.trim();
-              console.log('[Persistence] Loaded backup path from dedicated config:', bPath);
-            }
-          } catch (e) {
-            console.log('[Persistence] Dedicated config not found, falling back to main data file.');
-          }
-
-          const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
-          const content = await fs.readTextFile(dataPath);
-          if (content) {
-            const fullData = JSON.parse(content);
-            if (fullData.people) peopleData = fullData.people;
-            if (fullData.notes) notesData = fullData.notes;
-            if (fullData.systemTags) tagsData = fullData.systemTags;
-            if (fullData.theme) theme = fullData.theme;
-            if (fullData.themeMode) mode = fullData.themeMode;
-            // 如果专门配置文件没读到，才用主文件的
-            if ((!bPath || bPath === 'E:\\DayBACK') && fullData.backupPath) bPath = fullData.backupPath;
-            if (fullData.maxBackups) mBackups = fullData.maxBackups;
-
-            // Sync to localStorage as a cache
-            localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(peopleData));
-            localStorage.setItem(STORAGE_KEYS.NOTES, JSON.stringify(notesData));
-            localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(tagsData));
-            localStorage.setItem(STORAGE_KEYS.THEME, theme);
-            localStorage.setItem(STORAGE_KEYS.THEME_MODE, mode);
-            localStorage.setItem(STORAGE_KEYS.BACKUP_PATH, bPath);
-            localStorage.setItem(STORAGE_KEYS.MAX_BACKUPS, mBackups.toString());
-          }
-        } catch (e) {
-          console.log("No persistent data file found or failed to read, using localStorage.");
+          const notesMap: Record<string, Note> = {};
+          dbNotesList.forEach(n => {
+            notesMap[`${n.person_id}_${n.date}`] = n;
+          });
+          setFullNotes(notesMap);
+          fullNotesRef.current = notesMap;
+          
+          if (dbTags) { setSystemTags(dbTags.value); systemTagsRef.current = dbTags.value; }
+          if (dbTheme) { setThemeColor(dbTheme.value); themeColorRef.current = dbTheme.value; }
+          if (dbMode) { setThemeMode(dbMode.value); themeModeRef.current = dbMode.value; }
+          if (dbBackup) { setBackupPath(dbBackup.value); backupPathRef.current = dbBackup.value; }
+          if (dbMaxBackups) { setMaxBackups(dbMaxBackups.value); maxBackupsRef.current = dbMaxBackups.value; }
+          
+          setSelectedPerson(dbPeople[0]);
+          selectedPersonRef.current = dbPeople[0];
+          setIsLoading(false);
+          return;
         }
-      }
 
-      setPeople(peopleData);
-      peopleRef.current = peopleData;
-      if (peopleData.length > 0) {
-        setSelectedPerson(peopleData[0]);
-        selectedPersonRef.current = peopleData[0];
+        // 2. Fallback to migration
+        console.log('[Migration] No DB data found, starting migration...');
+        let peopleData = getLocalPeople();
+        let notesData = getLocalNotes();
+        let tagsData = getSystemTags();
+        let theme = localStorage.getItem(STORAGE_KEYS.THEME) || '#3b82f6';
+        let mode = (localStorage.getItem(STORAGE_KEYS.THEME_MODE) as 'dark' | 'light') || 'dark';
+        let bPath = localStorage.getItem(STORAGE_KEYS.BACKUP_PATH) || 'E:\\DayBACK';
+        let mBackups = parseInt(localStorage.getItem(STORAGE_KEYS.MAX_BACKUPS) || '10');
+
+        if (isTauri) {
+          try {
+            const dataDir = await path.appDataDir();
+            const dataPath = await path.join(dataDir, 'calendar_persistent_data.json');
+            if (await fs.exists(dataPath)) {
+              const content = await fs.readTextFile(dataPath);
+              const fullData = JSON.parse(content);
+              if (fullData.people) peopleData = fullData.people;
+              if (fullData.notes) notesData = fullData.notes;
+              if (fullData.systemTags) tagsData = fullData.systemTags;
+              if (fullData.theme) theme = fullData.theme;
+              if (fullData.themeMode) mode = fullData.themeMode;
+              if (fullData.backupPath) bPath = fullData.backupPath;
+              if (fullData.maxBackups) mBackups = fullData.maxBackups;
+            }
+          } catch (err) {}
+        }
+
+        // Save migrated data to DB
+        await db.people.bulkAdd(peopleData);
+        await db.notes.bulkAdd(Object.values(notesData));
+        await db.settings.bulkPut([
+          { key: 'system_tags', value: tagsData },
+          { key: 'theme', value: theme },
+          { key: 'theme_mode', value: mode },
+          { key: 'backup_path', value: bPath },
+          { key: 'max_backups', value: mBackups }
+        ]);
+
+        setPeople(peopleData);
+        peopleRef.current = peopleData;
+        setFullNotes(notesData);
+        fullNotesRef.current = notesData;
+        setSystemTags(tagsData);
+        systemTagsRef.current = tagsData;
+        setThemeColor(theme);
+        themeColorRef.current = theme;
+        setThemeMode(mode);
+        themeModeRef.current = mode;
+        setBackupPath(bPath);
+        backupPathRef.current = bPath;
+        setMaxBackups(mBackups);
+        maxBackupsRef.current = mBackups;
+        setSelectedPerson(peopleData[0] || null);
+        selectedPersonRef.current = peopleData[0] || null;
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Data Loading Error:', err);
+        setIsLoading(false);
       }
-      setFullNotes(notesData);
-      fullNotesRef.current = notesData;
-      setSystemTags(tagsData);
-      systemTagsRef.current = tagsData;
-      setThemeColor(theme);
-      setThemeMode(mode);
-      setBackupPath(bPath);
-      backupPathRef.current = bPath;
-      setMaxBackups(mBackups);
-      maxBackupsRef.current = mBackups;
-      setIsLoading(false);
     };
 
     loadInitialData();
