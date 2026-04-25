@@ -2117,6 +2117,15 @@ export default function App() {
     if (isTauri && !isLoading) syncFullDataToFile();
   }, [maxBackups, isLoading, isTauri]);
 
+  useEffect(() => {
+    if (!isLoading) {
+      db.settings.put({ key: 'system_tags', value: systemTags });
+      systemTagsRef.current = systemTags;
+      localStorage.setItem(STORAGE_KEYS.SYSTEM_TAGS, JSON.stringify(systemTags));
+      if (isTauri) syncFullDataToFile();
+    }
+  }, [systemTags, isLoading, isTauri, syncFullDataToFile]);
+
   const notes = useMemo(() => {
     if (!selectedPerson) return {};
     
@@ -2931,8 +2940,58 @@ export default function App() {
 
                 </div>
 
-                {/* Right Column: Data Management */}
+                {/* Right Column: Data & Tags */}
                 <div className="space-y-8">
+                  <div className="space-y-4">
+                    <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">默认标签管理</label>
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap gap-2 p-3 bg-[var(--color-calendar-surface-hover)]/50 rounded-xl border border-[var(--color-calendar-border)]">
+                        {systemTags.map((tag, idx) => (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-[var(--color-calendar-surface)] border border-[var(--color-calendar-border)] rounded-lg group">
+                            <span className="text-sm">{tag}</span>
+                            <button 
+                              onClick={() => {
+                                const newName = prompt('输入标签新名称', tag);
+                                if (newName && newName.trim() && newName !== tag) {
+                                  const updated = [...systemTags];
+                                  updated[idx] = newName.trim();
+                                  setSystemTags(updated);
+                                }
+                              }}
+                              className="text-[var(--color-calendar-text-dim)] hover:text-[var(--color-calendar-accent)] transition-colors"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                            {systemTags.length > 1 && (
+                              <button 
+                                onClick={() => {
+                                  if (confirm(`确定要移除 "${tag}" 标签吗？`)) {
+                                    setSystemTags(systemTags.filter((_, i) => i !== idx));
+                                  }
+                                }}
+                                className="text-[var(--color-calendar-text-dim)] hover:text-red-500 transition-colors"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <button 
+                          onClick={() => {
+                            const name = prompt('输入新标签名称');
+                            if (name && name.trim()) {
+                              setSystemTags([...systemTags, name.trim()]);
+                            }
+                          }}
+                          className="flex items-center justify-center p-1.5 border border-dashed border-[var(--color-calendar-border)] rounded-lg text-[var(--color-calendar-text-dim)] hover:text-[var(--color-calendar-accent)] hover:border-[var(--color-calendar-accent)] transition-all"
+                        >
+                          <Plus size={16} />
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-[var(--color-calendar-text-dim)]">修改这里的标签会影响日历编辑器的默认模板</p>
+                    </div>
+                  </div>
+
                   <div className="space-y-4">
                     <label className="text-sm font-bold text-[var(--color-calendar-text-muted)] uppercase tracking-widest">数据管理</label>
                     <div className="space-y-3">
